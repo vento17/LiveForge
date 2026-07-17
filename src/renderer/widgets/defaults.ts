@@ -1,0 +1,495 @@
+import type {
+  Widget, WidgetKind,
+  SliderBankWidget, ButtonGridWidget, KnobBankWidget, XYPadWidget,
+  ImageWidget, TextWidget, StepSequencerWidget, StepConfig,
+  SliderCellConfig, ButtonCellConfig, KnobCellConfig,
+  GraphWidget, GraphPoint,
+  CuesWidget, CueData,
+  TimelineWidget,
+  SpoutInputWidget, NdiInputWidget,
+  SubmastersWidget, RouterWidget,
+  AutoBpmWidget,
+  AudioAnalyserWidget, SoundPlayerWidget,
+  LfoWidget, MathWidget, ValueDisplayWidget,
+  MasterLevelWidget, InstanceWidget,
+} from '../../shared/types/project';
+import { BEAT_DIVISORS } from '../../shared/types/project';
+import type { MidiMapping, OscMapping } from '../../shared/types/mapping';
+import {
+  DEFAULT_WIDGET_STYLE,
+  DEFAULT_SLIDER_RECT, DEFAULT_BUTTON_RECT,
+  DEFAULT_KNOB_RECT, DEFAULT_XYPAD_RECT,
+  DEFAULT_IMAGE_RECT, DEFAULT_TEXT_RECT, DEFAULT_SEQUENCER_RECT,
+  DEFAULT_GRAPH_RECT, DEFAULT_CUES_RECT, DEFAULT_TIMELINE_RECT,
+  DEFAULT_SPOUT_RECT, DEFAULT_NDI_RECT, DEFAULT_SUBMASTERS_RECT, DEFAULT_ROUTER_RECT,
+  DEFAULT_AUTO_BPM_RECT, DEFAULT_AUDIO_ANALYSER_RECT, DEFAULT_SOUND_PLAYER_RECT,
+  DEFAULT_LFO_RECT, DEFAULT_MATH_RECT, DEFAULT_VALUE_DISPLAY_RECT,
+  DEFAULT_MASTER_LEVEL_RECT, DEFAULT_INSTANCE_RECT,
+} from '../../shared/constants';
+
+// ─── Mapping auto-increment helpers ──────────────────────────────────────────
+// baseIndex = starting offset so widgets don't collide (caller passes next free index)
+
+export function defaultMidiMapping(cellIndex: number, baseIndex: number): MidiMapping {
+  return {
+    type: 'midi',
+    messageType: 'controlChange',
+    channel: 1,
+    number: ((baseIndex + cellIndex) % 128),
+    minValue: 0,
+    maxValue: 127,
+  };
+}
+
+const KIND_PREFIX: Record<string, string> = {
+  sliderBank: 'slider', buttonGrid: 'btn', knobBank: 'knob', xyPad: 'xy',
+};
+
+// widgetRank = index of this widget among same-kind widgets on the page (0-based)
+export function defaultOscMapping(kind: string, widgetRank: number, cellIndex: number): OscMapping {
+  const prefix = KIND_PREFIX[kind] ?? kind;
+  return {
+    type: 'osc',
+    address: `/${prefix}${widgetRank + 1}/${cellIndex + 1}`,
+  };
+}
+
+// ─── Cell factories ───────────────────────────────────────────────────────────
+
+export function makeSliderCells(count: number, baseIndex: number, label: string): SliderCellConfig[] {
+  return Array.from({ length: count }, (_, i) => ({
+    label: `${label}${i + 1}`,
+    mapping: defaultMidiMapping(i, baseIndex),
+    feedbackRules: [],
+  }));
+}
+
+export function makeButtonCells(count: number, baseIndex: number, label: string): ButtonCellConfig[] {
+  return Array.from({ length: count }, (_, i) => ({
+    label: `${label}${i + 1}`,
+    behavior: 'pulse' as const,
+    mapping: defaultMidiMapping(i, baseIndex),
+    feedbackRules: [],
+    onValue: 127,
+    offValue: 0,
+  }));
+}
+
+export function makeKnobCells(count: number, baseIndex: number, label: string): KnobCellConfig[] {
+  return Array.from({ length: count }, (_, i) => ({
+    label: `${label}${i + 1}`,
+    mapping: defaultMidiMapping(i, baseIndex),
+    feedbackRules: [],
+    minAngle: -135,
+    maxAngle: 135,
+  }));
+}
+
+// ─── Widget factories ─────────────────────────────────────────────────────────
+// baseCC = next free MIDI CC to avoid collisions with existing widgets
+
+export function makeDefaultWidget(id: string, kind: WidgetKind, zIndex: number, baseCC = 0): Widget {
+  switch (kind) {
+    case 'sliderBank': {
+      const countX = 8, countY = 1;
+      return {
+        id, zIndex, kind: 'sliderBank',
+        label: 'Sliders',
+        rect: { ...DEFAULT_SLIDER_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        countX, countY,
+        orientation: 'vertical',
+        spacingX: 8, spacingY: 8,
+        cells: makeSliderCells(countX * countY, baseCC, 'S'),
+      } satisfies SliderBankWidget;
+    }
+    case 'buttonGrid': {
+      const countX = 4, countY = 4;
+      return {
+        id, zIndex, kind: 'buttonGrid',
+        label: 'Buttons',
+        rect: { ...DEFAULT_BUTTON_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        countX, countY,
+        spacingX: 8, spacingY: 8,
+        cells: makeButtonCells(countX * countY, baseCC, 'B'),
+      } satisfies ButtonGridWidget;
+    }
+    case 'knobBank': {
+      const countX = 4, countY = 2;
+      return {
+        id, zIndex, kind: 'knobBank',
+        label: 'Knobs',
+        rect: { ...DEFAULT_KNOB_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        countX, countY,
+        spacingX: 8, spacingY: 8,
+        knobSize: 56,
+        cells: makeKnobCells(countX * countY, baseCC, 'K'),
+      } satisfies KnobBankWidget;
+    }
+    case 'xyPad': {
+      return {
+        id, zIndex, kind: 'xyPad',
+        label: 'XY Pad',
+        rect: { ...DEFAULT_XYPAD_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        mappingX: { type: 'midi', messageType: 'controlChange', channel: 1, number: baseCC % 128, minValue: 0, maxValue: 127 },
+        mappingY: { type: 'midi', messageType: 'controlChange', channel: 1, number: (baseCC + 1) % 128, minValue: 0, maxValue: 127 },
+        feedbackRulesX: [],
+        feedbackRulesY: [],
+        showCrosshair: true,
+        invertX: false,
+        invertY: false,
+      } satisfies XYPadWidget;
+    }
+    case 'imageWidget': {
+      return {
+        id, zIndex, kind: 'imageWidget',
+        label: 'Image',
+        rect: { ...DEFAULT_IMAGE_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: 'transparent' },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        src: '',
+        layer: 'under',
+        blendMode: 'normal',
+        opacity: 1,
+      } satisfies ImageWidget;
+    }
+    case 'textWidget': {
+      return {
+        id, zIndex, kind: 'textWidget',
+        label: 'Text',
+        rect: { ...DEFAULT_TEXT_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: 'transparent' },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        text: 'Text',
+        fontFamily: 'sans-serif',
+        fontWeight: 'normal',
+        fontStyle: 'normal',
+        textColor: '#ffffff',
+        textAlign: 'center',
+        layer: 'under',
+        frame: 'none',
+        frameColor: '#ffffff',
+        frameSize: 1,
+      } satisfies TextWidget;
+    }
+    case 'stepSequencer': {
+      const stepCount = 16;
+      const steps: StepConfig[] = Array.from({ length: stepCount }, () => ({ active: false, value: 1 }));
+      return {
+        id, zIndex, kind: 'stepSequencer',
+        label: 'Step Sequencer',
+        rect: { ...DEFAULT_SEQUENCER_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE },
+        outputProtocol: 'midi',
+        mapping: defaultMidiMapping(0, baseCC),
+        feedbackRules: [],
+        stepCount,
+        speedMultiplier: 1,
+        steps,
+      } satisfies StepSequencerWidget;
+    }
+    case 'graphWidget': {
+      const points: GraphPoint[] = [
+        { x: 0,   y: 0, mode: 'linear' },
+        { x: 0.5, y: 1, mode: 'linear' },
+        { x: 1,   y: 0, mode: 'linear' },
+      ];
+      return {
+        id, zIndex, kind: 'graphWidget',
+        label: 'Graph',
+        rect: { ...DEFAULT_GRAPH_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE },
+        outputProtocol: 'midi',
+        mapping: defaultMidiMapping(0, baseCC),
+        feedbackRules: [],
+        points,
+        speedMultiplier: 1,
+        timingMode: 'bpm',
+        manualDuration: 4,
+        playMode: 'loop',
+        playMapping: null,
+        stopMapping: null,
+        reverseMapping: null,
+      } satisfies GraphWidget;
+    }
+    case 'timeline': {
+      return {
+        id, zIndex, kind: 'timeline',
+        label: 'Timeline',
+        rect: { ...DEFAULT_TIMELINE_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        duration: 30,
+        loopMode: 'none',
+        markers: [],
+        tracks: [],
+        playMapping: null,
+        stopMapping: null,
+      } satisfies TimelineWidget;
+    }
+    case 'cues': {
+      return {
+        id, zIndex, kind: 'cues',
+        label: 'Cues',
+        rect: { ...DEFAULT_CUES_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        cues: [] as CueData[],
+        navFirst:  null,
+        navPrev:   null,
+        navNext:   null,
+        navRandom: null,
+        navLast:   null,
+      } satisfies CuesWidget;
+    }
+    case 'spoutInput': {
+      return {
+        id, zIndex, kind: 'spoutInput',
+        label: 'Spout Input',
+        rect: { ...DEFAULT_SPOUT_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: '#000000' },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        senderName: '',
+        borderWidth: 0,
+        borderColor: '#ffffff',
+        targetFps: 0,
+      } satisfies SpoutInputWidget;
+    }
+    case 'ndiInput': {
+      return {
+        id, zIndex, kind: 'ndiInput',
+        label: 'NDI Input',
+        rect: { ...DEFAULT_NDI_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: '#000000' },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        sourceName: '',
+        borderWidth: 0,
+        borderColor: '#ffffff',
+        targetFps: 0,
+      } satisfies NdiInputWidget;
+    }
+    case 'submasters': {
+      const countX = 8;
+      return {
+        id, zIndex, kind: 'submasters',
+        label: 'Submasters',
+        rect: { ...DEFAULT_SUBMASTERS_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        countX,
+        spacingX: 6,
+        spacingY: 6,
+        mergeMode: 'htp',
+        linkedWidgetIds: [],
+        scenes: Array.from({ length: countX }, (_, i) => ({
+          label: `${i + 1}`,
+          snapshot: {},
+        })),
+      } satisfies SubmastersWidget;
+    }
+    case 'router': {
+      return {
+        id, zIndex, kind: 'router',
+        label: 'Router',
+        rect: { ...DEFAULT_ROUTER_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: 'transparent' },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        rows: [],
+      } satisfies RouterWidget;
+    }
+    case 'autoBpm': {
+      return {
+        id, zIndex, kind: 'autoBpm',
+        label: 'BPM Clock',
+        rect: { ...DEFAULT_AUTO_BPM_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: '#060608' },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        beatOutputs: BEAT_DIVISORS.map((divisor) => ({
+          divisor,
+          triggerMapping: null,
+          rampMapping: null,
+        })),
+      } satisfies AutoBpmWidget;
+    }
+    case 'audioAnalyser': {
+      return {
+        id, zIndex, kind: 'audioAnalyser',
+        label: 'Audio Analyser',
+        rect: { ...DEFAULT_AUDIO_ANALYSER_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: '#060608' },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        audioDeviceId: null,
+        beatOutputs: BEAT_DIVISORS.map((divisor) => ({
+          divisor,
+          triggerMapping: null,
+          rampMapping: null,
+        })),
+        kickThreshold: 0.10,
+        kickFreq: 80,
+        kickBand: 120,
+        snareThreshold: 0.08,
+        snareFreq: 250,
+        snareBand: 500,
+        bassFreq: 250,
+        bassBand: 100,
+        midFreq: 1500,
+        midBand: 3000,
+        highFreq: 4000,
+        highBand: 500,
+        kickMapping: null,
+        snareMapping: null,
+        bassMapping: null,
+        midMapping: null,
+        highMapping: null,
+      } satisfies AudioAnalyserWidget;
+    }
+    case 'soundPlayer': {
+      return {
+        id, zIndex, kind: 'soundPlayer',
+        label: 'Sound Player',
+        rect: { ...DEFAULT_SOUND_PLAYER_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: '#060608' },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        tracks: [],
+        masterVolume: 0.8,
+      } satisfies SoundPlayerWidget;
+    }
+    case 'lfoWidget': {
+      return {
+        id, zIndex, kind: 'lfoWidget',
+        label: 'LFO',
+        rect: { ...DEFAULT_LFO_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: '#060608' },
+        outputProtocol: 'midi',
+        mapping: defaultMidiMapping(0, baseCC),
+        feedbackRules: [],
+        waveform: 'sine',
+        rateMode: 'bpm',
+        rateMultiplier: 1,
+        rateHz: 1,
+        amplitude: 1,
+        offset: 0.5,
+        phase: 0,
+        playMapping: null,
+        stopMapping: null,
+      } satisfies LfoWidget;
+    }
+    case 'mathWidget': {
+      return {
+        id, zIndex, kind: 'mathWidget',
+        label: 'Math',
+        rect: { ...DEFAULT_MATH_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: '#060608' },
+        outputProtocol: 'midi',
+        mapping: defaultMidiMapping(0, baseCC),
+        feedbackRules: [],
+        sourceAWidgetId: '',
+        sourceACellIndex: 0,
+        sourceBWidgetId: '',
+        sourceBCellIndex: 0,
+        operation: 'add',
+        scale: 1,
+        offset: 0,
+        clampOutput: true,
+      } satisfies MathWidget;
+    }
+    case 'valueDisplay': {
+      return {
+        id, zIndex, kind: 'valueDisplay',
+        label: 'Value',
+        rect: { ...DEFAULT_VALUE_DISPLAY_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: '#060608' },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        sourceWidgetId: '',
+        sourceCellIndex: 0,
+        displayFormat: 'percent',
+        decimals: 1,
+      } satisfies ValueDisplayWidget;
+    }
+    case 'masterLevel': {
+      return {
+        id, zIndex, kind: 'masterLevel',
+        label: 'Master',
+        rect: { ...DEFAULT_MASTER_LEVEL_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, showValue: true, valueFormat: 'percent' },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        protocol: 'artnet',
+        orientation: 'vertical',
+      } satisfies MasterLevelWidget;
+    }
+    case 'instance': {
+      return {
+        id, zIndex, kind: 'instance',
+        label: 'Instance',
+        rect: { ...DEFAULT_INSTANCE_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, backgroundColor: 'transparent' },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        sourceWidgetId: '',
+      } satisfies InstanceWidget;
+    }
+  }
+}
+
+// Count total cells used across all widgets to compute next free CC
+export function nextFreeCc(widgets: Widget[]): number {
+  return widgets.reduce((acc, w) => {
+    if (w.kind === 'xyPad') return acc + 2;
+    if (w.kind === 'imageWidget' || w.kind === 'textWidget') return acc;
+    if (w.kind === 'stepSequencer' || w.kind === 'graphWidget') return acc + 1;
+    if (w.kind === 'cues' || w.kind === 'timeline') return acc;
+    if (w.kind === 'spoutInput' || w.kind === 'ndiInput') return acc;
+    if (w.kind === 'submasters') return acc;
+    if (w.kind === 'router') return acc;
+    if (w.kind === 'autoBpm') return acc;
+    if (w.kind === 'audioAnalyser') return acc;
+    if (w.kind === 'soundPlayer') return acc;
+    if (w.kind === 'valueDisplay') return acc;
+    if (w.kind === 'masterLevel') return acc;
+    if (w.kind === 'instance') return acc;
+    if (w.kind === 'lfoWidget' || w.kind === 'mathWidget') return acc + 1;
+    return acc + w.countX * w.countY;
+  }, 0);
+}

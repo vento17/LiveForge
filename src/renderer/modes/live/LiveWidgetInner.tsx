@@ -1,0 +1,56 @@
+import React from 'react';
+import type {
+  Widget, CuesWidget, TimelineWidget, SpoutInputWidget, NdiInputWidget, SubmastersWidget,
+  RouterWidget, AudioAnalyserWidget, SoundPlayerWidget, LfoWidget, MathWidget, ValueDisplayWidget,
+  MasterLevelWidget, InstanceWidget,
+} from '../../../shared/types/project';
+import SliderBankLive from '../../widgets/SliderBank/SliderBankLive';
+import ButtonGridLive from '../../widgets/ButtonGrid/ButtonGridLive';
+import KnobBankLive from '../../widgets/KnobBank/KnobBankLive';
+import XYPadLive from '../../widgets/XYPad/XYPadLive';
+import ImageWidgetLive from '../../widgets/ImageWidget/ImageWidgetLive';
+import TextWidgetLive from '../../widgets/TextWidget/TextWidgetLive';
+import StepSequencerLive from '../../widgets/StepSequencer/StepSequencerLive';
+import GraphWidgetLive from '../../widgets/GraphWidget/GraphWidgetLive';
+import CuesLive from '../../widgets/Cues/CuesLive';
+import TimelineLive from '../../widgets/Timeline/TimelineLive';
+import SpoutInputLive from '../../widgets/SpoutInput/SpoutInputLive';
+import NdiInputLive from '../../widgets/NdiInput/NdiInputLive';
+import SubmastersLive from '../../widgets/Submasters/SubmastersLive';
+import RouterLive from '../../widgets/Router/RouterLive';
+import AudioAnalyserLive from '../../widgets/AudioAnalyser/AudioAnalyserLive';
+import SoundPlayerLive from '../../widgets/SoundPlayer/SoundPlayerLive';
+import LfoWidgetLive from '../../widgets/LfoWidget/LfoWidgetLive';
+import MathWidgetLive from '../../widgets/MathWidget/MathWidgetLive';
+import ValueDisplayLive from '../../widgets/ValueDisplay/ValueDisplayLive';
+import MasterLevelLive from '../../widgets/MasterLevel/MasterLevelLive';
+import InstanceLive from '../../widgets/Instance/InstanceLive';
+
+// The live rendering of a single widget's inner content (no positioning wrapper).
+// Shared by LiveCanvas and by the Instance widget (which renders its source here).
+export default function LiveWidgetInner({ widget }: { widget: Widget }): React.JSX.Element | null {
+  switch (widget.kind) {
+    case 'sliderBank':    return <SliderBankLive widget={widget} />;
+    case 'buttonGrid':    return <ButtonGridLive widget={widget} />;
+    case 'knobBank':      return <KnobBankLive widget={widget} />;
+    case 'xyPad':         return <XYPadLive widget={widget} />;
+    case 'imageWidget':   return <ImageWidgetLive widget={widget} />;
+    case 'textWidget':    return <TextWidgetLive widget={widget} />;
+    case 'stepSequencer': return <StepSequencerLive widget={widget} />;
+    case 'graphWidget':   return <GraphWidgetLive widget={widget} />;
+    case 'cues':          return <CuesLive widget={widget as CuesWidget} />;
+    case 'timeline':      return <TimelineLive widget={widget as TimelineWidget} />;
+    case 'spoutInput':    return <SpoutInputLive widget={widget as SpoutInputWidget} />;
+    case 'ndiInput':      return <NdiInputLive widget={widget as NdiInputWidget} />;
+    case 'submasters':    return <SubmastersLive widget={widget as SubmastersWidget} />;
+    case 'router':        return <RouterLive widget={widget as RouterWidget} />;
+    case 'audioAnalyser': return <AudioAnalyserLive widget={widget as AudioAnalyserWidget} />;
+    case 'soundPlayer':   return <SoundPlayerLive widget={widget as SoundPlayerWidget} />;
+    case 'lfoWidget':     return <LfoWidgetLive widget={widget as LfoWidget} />;
+    case 'mathWidget':    return <MathWidgetLive widget={widget as MathWidget} />;
+    case 'valueDisplay':  return <ValueDisplayLive widget={widget as ValueDisplayWidget} />;
+    case 'masterLevel':   return <MasterLevelLive widget={widget as MasterLevelWidget} />;
+    case 'instance':      return <InstanceLive widget={widget as InstanceWidget} />;
+    default:              return null;
+  }
+}

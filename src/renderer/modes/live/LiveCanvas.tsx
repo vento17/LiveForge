@@ -1,0 +1,91 @@
+import React from 'react';
+import type { Widget, Page } from '../../../shared/types/project';
+import LiveWidgetInner from './LiveWidgetInner';
+import { useStore } from '../../store';
+
+function LiveWidget({ widget, onSelect }: { widget: Widget; onSelect?: (id: string) => void }): React.JSX.Element {
+  const isPassthrough = widget.kind === 'imageWidget' || widget.kind === 'textWidget';
+
+  const inner = <LiveWidgetInner widget={widget} />;
+
+  const s          = widget.style;
+  const frame      = s.frame ?? 'none';
+  const frameColor = s.frameColor ?? '#ffffff';
+  const frameSize  = s.frameSize  ?? 1;
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: widget.rect.x,
+        top: widget.rect.y,
+        width: widget.rect.width,
+        height: widget.rect.height,
+        borderRadius: s.borderRadius,
+        overflow: 'hidden',
+        background: s.backgroundColor,
+        boxSizing: 'border-box',
+        boxShadow: frame === 'outline' ? `inset 0 0 0 ${frameSize}px ${frameColor}` : undefined,
+        pointerEvents: isPassthrough ? 'none' : undefined,
+      }}
+      onPointerDown={() => onSelect?.(widget.id)}
+      onMouseMove={() => useStore.getState().setHoverInfo(`${widget.label} · ${widget.kind}`)}
+      onMouseLeave={() => useStore.getState().setHoverInfo(null)}
+    >
+      {inner}
+      {frame === 'underline' && (
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          height: frameSize, background: frameColor, pointerEvents: 'none',
+        }} />
+      )}
+    </div>
+  );
+}
+
+function getLayer(w: Widget): 'under' | 'normal' | 'over' {
+  if (w.kind === 'imageWidget' || w.kind === 'textWidget') return w.layer;
+  return 'normal';
+}
+
+interface LiveCanvasProps {
+  page: Page;
+  scale: number;
+  onSelectWidget?: (id: string) => void;
+}
+
+export default function LiveCanvas({ page, scale, onSelectWidget }: LiveCanvasProps): React.JSX.Element {
+  const offsetX = page.liveOffsetX ?? 0;
+  const offsetY = page.liveOffsetY ?? 0;
+
+  return (
+    // Outer div sized to scaled dimensions — flex parent will center this.
+    // id lets NetworkLive measure the exact on-screen page rect for click mapping.
+    <div id="lf-page-canvas" style={{
+      width: page.width * scale,
+      height: page.height * scale,
+      flexShrink: 0,
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      {/* Inner div: actual page content at natural size, scaled from top-left */}
+      <div style={{
+        position: 'absolute',
+        top: offsetY,
+        left: offsetX,
+        width: page.width,
+        height: page.height,
+        transform: `scale(${scale})`,
+        transformOrigin: 'top left',
+        background: page.backgroundColor,
+      }}>
+        {(['under', 'normal', 'over'] as const).flatMap((layer) =>
+          page.widgets
+            .filter((w) => getLayer(w) === layer)
+            .sort((a, b) => a.zIndex - b.zIndex)
+            .map((widget) => <LiveWidget key={widget.id} widget={widget} onSelect={onSelectWidget} />)
+        )}
+      </div>
+    </div>
+  );
+}

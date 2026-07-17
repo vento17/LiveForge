@@ -1,0 +1,365 @@
+import React, { useState, useRef, useEffect } from 'react';
+import type {
+  SubmastersWidget, Widget,
+  SliderBankWidget, KnobBankWidget, ButtonGridWidget, XYPadWidget,
+} from '../../../shared/types/project';
+import { useStore, useWidgetRuntime, useActivePage } from '../../store';
+import { dispatchValue, dispatchButton } from '../../ipc/dispatch';
+import { cellCount, clamp } from '../utils';
+import CellLinkMenu from '../base/CellLinkMenu';
+import { useSlavedCells, SLAVE_OUTLINE } from '../base/useSlavedCells';
+
+// ─── Dispatch helper (same as CuesLive) ──────────────────────────────────────
+
+function dispatchCellValue(widget: Widget, cellIndex: number, value: number): void {
+  switch (widget.kind) {
+    case 'sliderBank':
+    case 'knobBank': {
+      const w = widget as SliderBankWidget | KnobBankWidget;
+      dispatchValue(w.cells[cellIndex]?.mapping ?? widget.mapping, value);
+      break;
+    }
+    case 'buttonGrid': {
+      const w = widget as ButtonGridWidget;
+      const cell = w.cells[cellIndex];
+      dispatchButton(cell?.mapping ?? widget.mapping, value >= 0.5, cell?.onValue ?? 127, cell?.offValue ?? 0);
+      break;
+    }
+    case 'xyPad': {
+      const w = widget as XYPadWidget;
+      if (cellIndex === 0) dispatchValue(w.mappingX, value);
+      else dispatchValue(w.mappingY, value);
+      break;
+    }
+    default:
+      dispatchValue(widget.mapping, value);
+  }
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
+export default function SubmastersLive({ widget }: { widget: SubmastersWidget }): React.JSX.Element {
+  const { countX, spacingX, spacingY, style, scenes, mergeMode, linkedWidgetIds } = widget;
+
+  const { updateWidget, activePageId, setCellValue, setButtonActive } = useStore((s) => ({
+    updateWidget: s.updateWidget,
+    activePageId: s.activePageId,
+    setCellValue: s.setCellValue,
+    setButtonActive: s.setButtonActive,
+  }));
+  const activePage = useActivePage();
+  const widgetRuntime = useWidgetRuntime(widget.id);
+
+  const slavedCells = useSlavedCells(widget.id);
+  const [contextMenu, setContextMenu] = useState<{ cellIndex: number; x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = () => setContextMenu(null);
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
+  }, [contextMenu]);
+
+  const [recArmed, setRecArmed]               = useState(false);
+  const [delArmed, setDelArmed]               = useState(false);
+  const [lastTouchedScene, setLastTouchedScene] = useState(0);
+  const [flashedScenes, setFlashedScenes]     = useState<Set<number>>(new Set());
+
+  const preFlashRef = useRef<Record<number, number>>({});
+
+  const faderValues = Array.from({ length: countX }, (_, i) => widgetRuntime?.cells[i]?.value ?? 0);
+  const linkedWidgets = activePage?.widgets.filter((w) => linkedWidgetIds.includes(w.id)) ?? [];
+
+  const REC_COL_W = 48;
+  const pad = Math.max(spacingX, spacingY);
+
+  // ─── Merge + push ─────────────────────────────────────────────────────────
+
+  function computeAndPush(faderVals: number[], ltsTouched: number) {
+    if (linkedWidgets.length === 0) return;
+
+    for (const w of linkedWidgets) {
+      const count = cellCount(w);
+      const vals = new Array<number>(count).fill(0);
+
+      if (mergeMode === 'htp') {
+        for (let si = 0; si < countX; si++) {
+          const fv = faderVals[si] ?? 0;
+          if (fv === 0) continue;
+          const snap = scenes[si]?.snapshot[w.id];
+          if (!snap) continue;
+          for (let ci = 0; ci < count; ci++) {
+            vals[ci] = Math.max(vals[ci], (snap[ci] ?? 0) * fv);
+          }
+        }
+      } else {
+        // LTP: only the last-touched scene contributes
+        const fv = faderVals[ltsTouched] ?? 0;
+        const snap = scenes[ltsTouched]?.snapshot[w.id];
+        if (snap) {
+          for (let ci = 0; ci < count; ci++) {
+            vals[ci] = (snap[ci] ?? 0) * fv;
+          }
+        }
+      }
+
+      for (let ci = 0; ci < count; ci++) {
+        setCellValue(w.id, ci, vals[ci]);
+        dispatchCellValue(w, ci, vals[ci]);
+        if (w.kind === 'buttonGrid') {
+          setButtonActive(w.id, ci, vals[ci] >= 0.5);
+        }
+      }
+    }
+  }
+
+  function handleFaderChange(sceneIdx: number, value: number) {
+    setCellValue(widget.id, sceneIdx, value);
+    setLastTouchedScene(sceneIdx);
+    const newFaderValues = [...faderValues];
+    newFaderValues[sceneIdx] = value;
+    computeAndPush(newFaderValues, sceneIdx);
+  }
+
+  // ─── Scene record / delete ────────────────────────────────────────────────
+
+  function handleTopButtonPress(sceneIdx: number) {
+    if (!recArmed && !delArmed) return;
+
+    if (recArmed) {
+      const { runtime: rt, project, activePageId: pid } = useStore.getState();
+      const page = project.pages.find((p) => p.id === pid);
+      if (!page || !pid) return;
+      const snapshot: Record<string, number[]> = {};
+      for (const wid of linkedWidgetIds) {
+        const wr = rt.widgets[wid];
+        if (wr) snapshot[wid] = wr.cells.map((c) => c.value);
+      }
+      const newScenes = scenes.map((s, i) => i === sceneIdx ? { ...s, snapshot } : s);
+      updateWidget(pid, widget.id, { scenes: newScenes } as never);
+      setRecArmed(false);
+    } else {
+      // del armed — clear snapshot
+      if (!activePageId) return;
+      const newScenes = scenes.map((s, i) => i === sceneIdx ? { ...s, snapshot: {} } : s);
+      updateWidget(activePageId, widget.id, { scenes: newScenes } as never);
+      setDelArmed(false);
+    }
+  }
+
+  // ─── Flash (bottom buttons) ───────────────────────────────────────────────
+
+  function handleFlashDown(sceneIdx: number) {
+    preFlashRef.current[sceneIdx] = faderValues[sceneIdx];
+    setFlashedScenes((prev) => new Set([...prev, sceneIdx]));
+    handleFaderChange(sceneIdx, 1.0);
+  }
+
+  function handleFlashUp(sceneIdx: number) {
+    const prev = preFlashRef.current[sceneIdx] ?? 0;
+    delete preFlashRef.current[sceneIdx];
+    setFlashedScenes((prev) => { const next = new Set(prev); next.delete(sceneIdx); return next; });
+    handleFaderChange(sceneIdx, prev);
+  }
+
+  // When this submaster's own fader cells change from OUTSIDE the local drag
+  // handlers (e.g. a remote NetworkLive client, a router, or a cue), re-run the
+  // merge so linked widgets follow. Fires only when our own runtime changed, so
+  // pushing to linked widgets (which changes their runtime, not ours) can't loop.
+  const computeAndPushRef = useRef(computeAndPush);
+  computeAndPushRef.current = computeAndPush;
+  const lastTouchedRef = useRef(lastTouchedScene);
+  lastTouchedRef.current = lastTouchedScene;
+  const countXRef = useRef(countX);
+  countXRef.current = countX;
+  useEffect(() => {
+    return useStore.subscribe((state, prev) => {
+      const wr = state.runtime.widgets[widget.id];
+      if (!wr || wr === prev.runtime.widgets[widget.id]) return;
+      const n = countXRef.current;
+      const fv = Array.from({ length: n }, (_, i) => wr.cells[i]?.value ?? 0);
+      computeAndPushRef.current(fv, lastTouchedRef.current);
+    });
+  }, [widget.id]);
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
+  return (
+    <div style={{
+      width: '100%', height: '100%',
+      display: 'flex',
+      gap: spacingX,
+      padding: pad,
+      boxSizing: 'border-box',
+    }}>
+      {/* Scene columns */}
+      <div style={{ flex: 1, display: 'flex', gap: spacingX, minWidth: 0 }}>
+        {Array.from({ length: countX }, (_, i) => {
+          const scene = scenes[i];
+          const hasData = scene && Object.keys(scene.snapshot).length > 0;
+          const fv = faderValues[i];
+          const btnColor = scene?.color ?? style.foregroundColor;
+          const isFlashing = flashedScenes.has(i);
+
+          let topBg: string;
+          if (recArmed)      topBg = 'rgba(255,50,50,0.45)';
+          else if (delArmed) topBg = 'rgba(255,150,0,0.45)';
+          else if (hasData)  topBg = fv > 0.001 ? btnColor : `${btnColor}55`;
+          else               topBg = 'rgba(255,255,255,0.07)';
+
+          return (
+            <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: spacingY, minWidth: 0 }}>
+              {/* Top button — scene record / status */}
+              <div
+                onClick={() => handleTopButtonPress(i)}
+                style={{
+                  flexShrink: 0, height: 28,
+                  background: topBg,
+                  borderRadius: 3,
+                  cursor: (recArmed || delArmed) ? 'pointer' : 'default',
+                  border: (recArmed || delArmed) ? '1px dashed rgba(255,255,255,0.25)' : '1px solid transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  userSelect: 'none',
+                  transition: 'background 0.1s',
+                }}
+              >
+                {style.showLabel && (
+                  <span style={{
+                    fontSize: Math.max(style.fontSize - 2, 8),
+                    color: hasData ? (fv > 0.001 ? '#000' : style.labelColor) : style.labelColor,
+                    pointerEvents: 'none',
+                    opacity: hasData ? 1 : 0.5,
+                  }}>
+                    {scene?.label ?? `${i + 1}`}
+                  </span>
+                )}
+              </div>
+
+              {/* Fader */}
+              <div
+                style={{
+                  flex: 1, position: 'relative',
+                  background: 'rgba(0,0,0,0.35)',
+                  borderRadius: 4, overflow: 'hidden',
+                  touchAction: 'none',
+                  cursor: slavedCells.has(i) ? 'context-menu' : 'pointer',
+                  outline: slavedCells.has(i) ? SLAVE_OUTLINE : undefined,
+                  outlineOffset: slavedCells.has(i) ? -2 : undefined,
+                }}
+                onPointerDown={(e) => {
+                  // Slaved faders are driven by the router — right-click → Unlink.
+                  if (slavedCells.has(i)) return;
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const v = clamp(1 - (e.clientY - rect.top) / rect.height, 0, 1);
+                  handleFaderChange(i, v);
+                }}
+                onPointerMove={(e) => {
+                  if (slavedCells.has(i)) return;
+                  if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const v = clamp(1 - (e.clientY - rect.top) / rect.height, 0, 1);
+                  handleFaderChange(i, v);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setContextMenu({ cellIndex: i, x: e.clientX, y: e.clientY });
+                }}
+                onMouseMove={(e) => {
+                  e.stopPropagation();
+                  useStore.getState().setHoverInfo(widget.label + ' · ' + (scene?.label ?? String(i + 1)));
+                }}
+              >
+                {/* Fill */}
+                <div style={{
+                  position: 'absolute', bottom: 0, left: 0, right: 0,
+                  height: `${fv * 100}%`,
+                  background: btnColor, opacity: 0.45,
+                  transition: 'height 0.03s',
+                }} />
+                {/* Thumb */}
+                <div style={{
+                  position: 'absolute',
+                  bottom: `calc(${fv * 100}% - 8px)`,
+                  left: '10%', right: '10%', height: 16,
+                  background: btnColor, borderRadius: 4,
+                  zIndex: 1, boxShadow: '0 0 6px rgba(0,0,0,0.5)',
+                }} />
+              </div>
+
+              {/* Bottom button — flash */}
+              <div
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  handleFlashDown(i);
+                }}
+                onPointerUp={() => handleFlashUp(i)}
+                onPointerCancel={() => handleFlashUp(i)}
+                style={{
+                  flexShrink: 0, height: 28,
+                  background: isFlashing ? btnColor : 'rgba(255,255,255,0.06)',
+                  borderRadius: 3, cursor: 'pointer',
+                  touchAction: 'none',
+                  border: '1px solid transparent',
+                  transition: 'background 0.08s',
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Right REC / DEL column */}
+      <div style={{
+        flexShrink: 0, width: REC_COL_W,
+        display: 'flex', flexDirection: 'column', gap: spacingY,
+      }}>
+        {/* REC button */}
+        <div
+          onClick={() => { setRecArmed((v) => !v); setDelArmed(false); }}
+          style={{
+            flex: 1, borderRadius: 3,
+            background: recArmed ? '#cc1111' : 'rgba(200,30,30,0.15)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', userSelect: 'none',
+            border: `1px solid ${recArmed ? '#ff4444' : '#441111'}`,
+            transition: 'all 0.1s',
+          }}
+        >
+          <span style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: 1,
+            color: recArmed ? '#ffffff' : '#cc3333',
+          }}>REC</span>
+        </div>
+
+        {/* DEL button */}
+        <div
+          onClick={() => { setDelArmed((v) => !v); setRecArmed(false); }}
+          style={{
+            flex: 1, borderRadius: 3,
+            background: delArmed ? 'rgba(255,150,0,0.35)' : 'rgba(255,255,255,0.05)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', userSelect: 'none',
+            border: `1px solid ${delArmed ? 'rgba(255,150,0,0.5)' : '#252525'}`,
+            transition: 'all 0.1s',
+          }}
+        >
+          <span style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: 1,
+            color: delArmed ? '#ffaa00' : '#555',
+          }}>DEL</span>
+        </div>
+      </div>
+
+      {contextMenu && (
+        <CellLinkMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          widgetId={widget.id}
+          cellIndex={contextMenu.cellIndex}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+    </div>
+  );
+}
