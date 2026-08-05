@@ -8,6 +8,13 @@ let mainWindow: BrowserWindow | null = null;
 let sidecar: ChildProcess | null = null;
 
 function startSidecar(): void {
+  // The Spout/NDI video sidecar is Windows-only (Spout needs SpoutLibrary.dll).
+  // Skip it elsewhere so the app runs on macOS/Linux without those widgets —
+  // Windows behaviour is unchanged.
+  if (process.platform !== 'win32') {
+    console.log('[sidecar] skipped — Windows only');
+    return;
+  }
   let cmd: string;
   let args: string[];
   if (is.dev) {
@@ -17,10 +24,17 @@ function startSidecar(): void {
     cmd = join(process.resourcesPath, 'sidecar', 'sidecar.exe');
     args = [];
   }
-  sidecar = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  sidecar.stdout?.on('data', (d: Buffer) => process.stdout.write(`[sidecar] ${d}`));
-  sidecar.stderr?.on('data', (d: Buffer) => process.stderr.write(`[sidecar:err] ${d}`));
-  sidecar.on('exit', (code) => { console.log(`[sidecar] exited ${code}`); sidecar = null; });
+  try {
+    sidecar = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    // Never let a missing/failed sidecar crash the app (unhandled 'error' event).
+    sidecar.on('error', (err) => { console.error('[sidecar] failed to start:', err.message); sidecar = null; });
+    sidecar.stdout?.on('data', (d: Buffer) => process.stdout.write(`[sidecar] ${d}`));
+    sidecar.stderr?.on('data', (d: Buffer) => process.stderr.write(`[sidecar:err] ${d}`));
+    sidecar.on('exit', (code) => { console.log(`[sidecar] exited ${code}`); sidecar = null; });
+  } catch (err) {
+    console.error('[sidecar] spawn error:', err);
+    sidecar = null;
+  }
 }
 
 function createWindow(): void {

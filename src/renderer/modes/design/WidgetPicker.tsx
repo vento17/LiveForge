@@ -6,8 +6,12 @@ interface WidgetOption {
   kind: WidgetKind;
   label: string;
   description: string;
-  full?: boolean;   // spans both columns (stands alone)
+  full?: boolean;      // spans both columns (stands alone)
+  winOnly?: boolean;   // disabled on non-Windows (Spout is Windows-only)
 }
+
+// Spout uses a Windows-only native library; disable those widgets off Windows.
+const IS_WINDOWS = /Win/i.test(navigator.userAgent) || /Win/i.test(navigator.platform);
 
 // Ordered in pairs, cascading from static → controls → modulators → sequencers →
 // audio → video in → routing → masters → scenes, with Value Display alone last.
@@ -30,8 +34,8 @@ const WIDGET_OPTIONS: WidgetOption[] = [
   { kind: 'audioAnalyser', label: 'Audio Analyser', description: 'Kick/snare detection, BPM ramps and bass/mid/high band levels from an audio input.' },
   { kind: 'soundPlayer',   label: 'Sound Player',   description: 'Playlist with per-track play/pause/stop and volume — triggerable from the Router.' },
 
-  { kind: 'spoutInput',    label: 'Spout / Syphon', description: 'Live video from a Spout (Windows) or Syphon (macOS) sender.' },
-  { kind: 'ndiInput',      label: 'NDI Input',      description: 'Live video from an NDI source on the network.' },
+  { kind: 'spoutInput',    label: 'Spout / Syphon', description: 'Live video from a Spout sender.', winOnly: true },
+  { kind: 'ndiInput',      label: 'NDI Input',      description: 'Live video from an NDI source on the network.', winOnly: true },
 
   { kind: 'router',        label: 'Router',         description: 'Route one cell (or MIDI/OSC input) to many outputs — also holds right-click links.' },
   { kind: 'mathWidget',    label: 'Math / Merge',   description: 'Combine two cell sources with add, subtract, multiply, min, max, avg, invert.' },
@@ -71,18 +75,21 @@ export default function WidgetPicker(): React.JSX.Element {
         <div style={styles.grid} onMouseLeave={() => setHovered(null)}>
           {WIDGET_OPTIONS.map((o) => {
             const isHovered = hovered?.kind === o.kind;
+            const disabled = !!o.winOnly && !IS_WINDOWS;
             return (
               <button
                 key={o.kind}
+                disabled={disabled}
                 style={{
                   ...styles.card,
                   ...(o.full ? { gridColumn: '1 / -1' } : {}),
                   ...(isHovered ? styles.cardHover : {}),
+                  ...(disabled ? styles.cardDisabled : {}),
                 }}
-                onClick={() => handlePick(o.kind)}
+                onClick={() => { if (!disabled) handlePick(o.kind); }}
                 onMouseEnter={() => setHovered(o)}
               >
-                {o.label}
+                {o.label}{disabled ? '  ·  Windows only' : ''}
               </button>
             );
           })}
@@ -93,7 +100,12 @@ export default function WidgetPicker(): React.JSX.Element {
           {hovered ? (
             <>
               <div style={styles.descLabel}>{hovered.label}</div>
-              <div style={styles.descText}>{hovered.description}</div>
+              <div style={styles.descText}>
+                {hovered.description}
+                {hovered.winOnly && !IS_WINDOWS && (
+                  <span style={{ color: '#d08a3a' }}>  —  Windows only (Spout not available on this OS).</span>
+                )}
+              </div>
             </>
           ) : (
             <div style={styles.descHint}>hover a widget to see what it does</div>
@@ -156,6 +168,11 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--color-accent-dim, rgba(100,108,255,0.15))',
     border: '1px solid var(--color-accent)',
     color: 'var(--color-accent)',
+  },
+  cardDisabled: {
+    opacity: 0.4,
+    cursor: 'not-allowed',
+    color: 'var(--color-text-dim)',
   },
   desc: {
     flexShrink: 0,

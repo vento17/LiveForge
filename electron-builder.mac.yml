@@ -1,0 +1,17 @@
+# macOS build config — used by CI only (electron-builder --mac dmg --config electron-builder.mac.yml).
+# Deliberately OMITS the Spout/NDI sidecar (Windows-only). Everything else works.
+appId: com.vento.liveforge
+productName: LiveForge
+directories:
+  output: release
+files:
+  - out/**/*
+# Native modules must stay unpacked (loaded from disk, not from the asar).
+asarUnpack:
+  - node_modules/@julusian/**
+  - node_modules/koffi/**
+mac:
+  target: dmg
+  category: public.app-category.music
+  # No Developer ID certificate → build unsigned (Gatekeeper needs a
+  # right-click → Open on other Macs). CI sets CSC_IDENTITY_AUTO_DISCOVERY=false.

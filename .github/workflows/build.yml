@@ -51,16 +51,36 @@ jobs:
           path: release/*.exe
           if-no-files-found: error
 
-  # macOS (.dmg) is NOT enabled yet: the Python sidecar and the Spout integration
-  # are Windows-only (Spout's macOS counterpart is Syphon), and the native deps
-  # (@julusian/midi, koffi) need a macOS build. Enable once those are ported.
-  #
-  # macos:
-  #   name: macOS (.dmg)
-  #   runs-on: macos-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-node@v4
-  #       with: { node-version: 20, cache: npm }
-  #     - run: npm ci
-  #     - run: npx electron-builder --mac dmg
+  macos:
+    name: macOS (.dmg — no Spout/NDI)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci   # rebuilds @julusian/midi, koffi, serialport for macOS
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build app
+        run: npm run build
+
+      # Uses electron-builder.mac.yml (no sidecar). Spout/NDI widgets are
+      # disabled on macOS; everything else works. Unsigned build.
+      - name: Package dmg
+        run: npx electron-builder --mac dmg --config electron-builder.mac.yml
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false   # no Apple cert → skip signing
+
+      - name: Upload dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveForge-macos-dmg
+          path: release/*.dmg
+          if-no-files-found: error
