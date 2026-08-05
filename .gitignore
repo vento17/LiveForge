@@ -23,3 +23,6 @@ Thumbs.db
 .vscode/
 .idea/
 release/
+
+# User project saves (keep local, never publish)
+Save/
