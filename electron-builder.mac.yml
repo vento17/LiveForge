@@ -11,7 +11,10 @@ asarUnpack:
   - node_modules/@julusian/**
   - node_modules/koffi/**
 mac:
-  target: dmg
+  # Universal binary — one .dmg that runs on both Intel and Apple Silicon Macs.
+  target:
+    - target: dmg
+      arch: universal
   category: public.app-category.music
   # No Developer ID certificate → build unsigned (Gatekeeper needs a
   # right-click → Open on other Macs). CI sets CSC_IDENTITY_AUTO_DISCOVERY=false.
