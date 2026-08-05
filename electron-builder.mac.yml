@@ -11,10 +11,16 @@ asarUnpack:
   - node_modules/@julusian/**
   - node_modules/koffi/**
 mac:
-  # Universal binary — one .dmg that runs on both Intel and Apple Silicon Macs.
+  # Two separate dmgs — one for Intel (x64), one for Apple Silicon (arm64) —
+  # together covering every Mac. A merged "universal" build fails because the
+  # prebuildify native modules (@julusian/midi, koffi, @serialport) ship
+  # identical per-arch .node files that @electron/universal can't reconcile.
+  # Each arch builds cleanly on its own, so two dmgs sidestep the problem.
   target:
     - target: dmg
-      arch: universal
+      arch:
+        - x64
+        - arm64
   category: public.app-category.music
   # No Developer ID certificate → build unsigned (Gatekeeper needs a
   # right-click → Open on other Macs). CI sets CSC_IDENTITY_AUTO_DISCOVERY=false.

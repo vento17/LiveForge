@@ -71,9 +71,9 @@ jobs:
       - name: Build app
         run: npm run build
 
-      # Uses electron-builder.mac.yml (universal target, no sidecar). Spout/NDI
+      # Uses electron-builder.mac.yml (x64 + arm64 dmgs, no sidecar). Spout/NDI
       # widgets are disabled on macOS; everything else works. Unsigned build.
-      - name: Package dmg (universal — Intel + Apple Silicon)
+      - name: Package dmgs (Intel + Apple Silicon)
         run: npx electron-builder --mac --publish never --config electron-builder.mac.yml
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false   # no Apple cert → skip signing
