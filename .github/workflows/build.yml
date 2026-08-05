@@ -42,7 +42,7 @@ jobs:
       # checkout), which upload-artifact can't reach — override it to a path
       # inside the workspace for CI.
       - name: Package portable exe
-        run: npx electron-builder --win portable --config.directories.output=release
+        run: npx electron-builder --win portable --publish never --config.directories.output=release
 
       - name: Upload exe
         uses: actions/upload-artifact@v4
@@ -74,7 +74,7 @@ jobs:
       # Uses electron-builder.mac.yml (no sidecar). Spout/NDI widgets are
       # disabled on macOS; everything else works. Unsigned build.
       - name: Package dmg
-        run: npx electron-builder --mac dmg --config electron-builder.mac.yml
+        run: npx electron-builder --mac dmg --publish never --config electron-builder.mac.yml
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false   # no Apple cert → skip signing
 
