@@ -95,7 +95,9 @@ jobs:
   release:
     name: Publish Release
     needs: [windows, macos]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Publish whenever both builds succeed — works for a tag push AND for a manual
+    # "Run workflow", so no git tag is required to get download links.
+    if: ${{ needs.windows.result == 'success' && needs.macos.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
@@ -106,6 +108,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v0.1.0
+          name: LiveForge v0.1.0
           files: |
             artifacts/**/*.exe
             artifacts/**/*.dmg
