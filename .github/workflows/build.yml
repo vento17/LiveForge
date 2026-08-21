@@ -111,8 +111,13 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.0
-          name: LiveForge v0.1.0
+          # A tag push releases under that tag; a manual run refreshes a single
+          # rolling "dev-build" release instead of inventing a version. These
+          # were hardcoded to v0.1.0, so every later tag dumped its exe and dmgs
+          # onto the old release.
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'dev-build' }}
+          name: ${{ github.ref_type == 'tag' && format('LiveForge {0}', github.ref_name) || 'LiveForge dev build' }}
+          prerelease: ${{ github.ref_type != 'tag' }}
           files: |
             artifacts/**/*.exe
             artifacts/**/*.dmg
