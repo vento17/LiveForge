@@ -5,13 +5,23 @@
 // Model: one router row per slave cell (source + a single output → slave cell).
 // This keeps unlink / re-source trivial and robust.
 
-import type { Project, Widget, RouterWidget, RouterRow, RouterInputType, TrigTrack } from '../../../shared/types/project';
-import { cellCount, timelineTrigCells } from '../utils';
+import type { Project, Widget, RouterWidget, RouterRow, RouterInputType, TrigTrack, CueTrack } from '../../../shared/types/project';
+import { cellCount, timelineTrigCells, timelineCueCells } from '../utils';
 
 const BEAT_DIVS = [1, 2, 3, 4, 8, 16, 32, 64] as const;
 
 // ─── Cell labelling ────────────────────────────────────────────────────────────
 // Human label for the i-th cell of a widget (shared by RouterDesign + link menu).
+
+// Label for "every cell of this widget". Reuses the cell naming so it reads as
+// one of the family: a bank whose cells are S1.1…S1.8 shows as S1.ALL.
+export function allCellsLabel(w: Widget | undefined): string {
+  if (!w) return 'ALL';
+  const cells = (w as { cells?: { label?: string }[] }).cells;
+  const first = Array.isArray(cells) ? cells[0]?.label : undefined;
+  const stem = first?.match(/^(.*)\.\d+$/)?.[1];
+  return stem ? `${stem}.ALL` : 'ALL';
+}
 
 export function cellLabel(w: Widget | undefined, cellIndex: number): string {
   if (!w) return `#${cellIndex + 1}`;
@@ -20,6 +30,10 @@ export function cellLabel(w: Widget | undefined, cellIndex: number): string {
   if (w.kind === 'lfoWidget') return 'output';
   if (w.kind === 'mathWidget') return 'result';
   if (w.kind === 'masterLevel') return 'level';
+  if (w.kind === 'keyboard') {
+    const k = w.keys[cellIndex];
+    return k ? (k.label || k.code) : `#${cellIndex + 1}`;
+  }
   if (w.kind === 'cues') {
     const cue = w.cues[cellIndex];
     return cue ? (cue.name || `cue ${cellIndex + 1}`) : `#${cellIndex + 1}`;
@@ -32,8 +46,15 @@ export function cellLabel(w: Widget | undefined, cellIndex: number): string {
   if (w.kind === 'timeline') {
     const track = w.tracks[cellIndex];
     if (track) return `${track.kind}: ${track.label}`;
-    // Beyond the track cells: an individual trig marker
-    const entry = timelineTrigCells(w)[cellIndex - w.tracks.length];
+    // Beyond the track cells: an individual trig marker, then a cue block.
+    const trigs = timelineTrigCells(w);
+    const cueEntry = timelineCueCells(w)[cellIndex - w.tracks.length - trigs.length];
+    if (cueEntry) {
+      const ct = w.tracks[cueEntry.trackIndex] as CueTrack;
+      const region = ct.cues[cueEntry.regionIndex];
+      return `cue: ${region?.name || `#${cueEntry.regionIndex + 1}`}`;
+    }
+    const entry = trigs[cellIndex - w.tracks.length];
     if (!entry) return `#${cellIndex + 1}`;
     const trk = w.tracks[entry.trackIndex] as TrigTrack;
     const mk  = trk.keyframes[entry.markerIndex];

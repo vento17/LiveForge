@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { Rnd } from 'react-rnd';
+import type { Widget } from '../../../shared/types/project';
 import { useStore, useActivePage } from '../../store';
 import { GRID_SNAP_PX } from '../../../shared/constants';
 import WidgetPicker from './WidgetPicker';
@@ -35,6 +36,13 @@ export default function Canvas(): React.JSX.Element {
   const outerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
+  // Touch long-press → delete popup, so a widget can be removed without a keyboard.
+  const [deleteMenu, setDeleteMenu] = useState<{ ids: string[]; x: number; y: number } | null>(null);
+  const longPress = useRef<{ x: number; y: number; timer: number } | null>(null);
+  // Rubber-band (marquee) selection on empty canvas
+  const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const marqueeRef = useRef<{ x0: number; y0: number; moved: boolean } | null>(null);
+  const justMarqueed = useRef(false);
   // Track shift key as state so Rnd re-renders with disableDragging
   const [shiftHeld, setShiftHeld] = useState(false);
 
@@ -81,6 +89,50 @@ export default function Canvas(): React.JSX.Element {
     ? [selectedWidgetId]
     : selectedWidgetIds;
 
+  const cancelLongPress = useCallback(() => {
+    if (longPress.current) {
+      clearTimeout(longPress.current.timer);
+      longPress.current = null;
+    }
+  }, []);
+
+  useEffect(() => cancelLongPress, [cancelLongPress]);
+
+  // Hold a widget for LONG_PRESS_MS without sliding → delete popup. Mouse is
+  // excluded on purpose: pausing mid-drag while arranging a layout is normal with
+  // a pointer, and those users already have the Delete key.
+  const startLongPress = useCallback((e: React.PointerEvent, widgetId: string) => {
+    if (e.pointerType === 'mouse') return;
+    cancelLongPress();
+    const x = e.clientX;
+    const y = e.clientY;
+    const timer = window.setTimeout(() => {
+      longPress.current = null;
+      const selected = useStore.getState().selectedWidgetIds;
+      // Long-pressing one of several selected widgets acts on the whole group.
+      const ids = selected.includes(widgetId) && selected.length > 1 ? selected : [widgetId];
+      setDeleteMenu({ ids, x, y });
+    }, LONG_PRESS_MS);
+    longPress.current = { x, y, timer };
+  }, [cancelLongPress]);
+
+  const moveLongPress = useCallback((e: React.PointerEvent) => {
+    const lp = longPress.current;
+    if (!lp) return;
+    if (Math.abs(e.clientX - lp.x) > LONG_PRESS_SLOP || Math.abs(e.clientY - lp.y) > LONG_PRESS_SLOP) {
+      cancelLongPress();
+    }
+  }, [cancelLongPress]);
+
+  function confirmDelete(): void {
+    if (!deleteMenu || !activePageId) return;
+    captureHistory();
+    deleteMenu.ids.forEach((id) => removeWidget(activePageId, id));
+    setSelectedWidgetId(null);
+    clearMultiSelection();
+    setDeleteMenu(null);
+  }
+
   return (
     <div
       ref={outerRef}
@@ -91,6 +143,15 @@ export default function Canvas(): React.JSX.Element {
         clearMultiSelection();
       }}
       onDoubleClick={() => useStore.getState().openWidgetPicker()}
+      // Ctrl+C/X/V/Z and Delete are React handlers on this div, so they only
+      // fire while it holds focus. react-rnd calls preventDefault on the drag
+      // mousedown, which stops the browser from focusing us when a widget is
+      // clicked — so claim focus ourselves on any press that is not in a field.
+      onPointerDownCapture={(e) => {
+        const tag = (e.target as HTMLElement)?.tagName?.toLowerCase() ?? '';
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+        if (document.activeElement !== outerRef.current) outerRef.current?.focus({ preventScroll: true });
+      }}
       onKeyDown={(e) => {
         if (editingWidgetId) return;
         const tag = (e.target as HTMLElement)?.tagName?.toLowerCase() ?? '';
@@ -138,7 +199,39 @@ export default function Canvas(): React.JSX.Element {
           position: 'relative',
           background: page?.backgroundColor ?? '#000000',
           boxShadow: '0 0 0 1px var(--color-border), 0 8px 40px rgba(0,0,0,0.6)',
-        }}>
+        }}
+          onPointerDown={(e) => {
+            // Start a marquee only on empty canvas (target is this div itself)
+            if (e.target !== e.currentTarget || e.button !== 0 || e.shiftKey) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            marqueeRef.current = { x0: (e.clientX - rect.left) / scale, y0: (e.clientY - rect.top) / scale, moved: false };
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }}
+          onPointerMove={(e) => {
+            const m = marqueeRef.current;
+            if (!m) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x1 = (e.clientX - rect.left) / scale, y1 = (e.clientY - rect.top) / scale;
+            m.moved = true;
+            setMarquee({ x: Math.min(m.x0, x1), y: Math.min(m.y0, y1), w: Math.abs(x1 - m.x0), h: Math.abs(y1 - m.y0) });
+          }}
+          onPointerUp={() => {
+            const m = marqueeRef.current;
+            const box = marquee;
+            marqueeRef.current = null;
+            setMarquee(null);
+            if (!m || !m.moved || !box || !page) return;
+            justMarqueed.current = true;   // suppress the click that would deselect
+            const ids = page.widgets.filter((w) =>
+              w.rect.x < box.x + box.w && w.rect.x + w.rect.width > box.x &&
+              w.rect.y < box.y + box.h && w.rect.y + w.rect.height > box.y
+            ).map((w) => w.id);
+            if (ids.length === 1) { setSelectedWidgetId(ids[0]); clearMultiSelection(); }
+            else if (ids.length > 1) { useStore.setState({ selectedWidgetIds: ids, selectedWidgetId: null }); }
+            else { setSelectedWidgetId(null); clearMultiSelection(); }
+          }}
+          onClick={(e) => { if (justMarqueed.current) { e.stopPropagation(); justMarqueed.current = false; } }}
+        >
           {/* Cross grid */}
           <div style={{
             position: 'absolute', inset: 0, pointerEvents: 'none',
@@ -164,6 +257,9 @@ export default function Canvas(): React.JSX.Element {
                   position={{ x: widget.rect.x, y: widget.rect.y }}
                   size={{ width: widget.rect.width, height: widget.rect.height }}
                   scale={scale}
+                  // With a multi-selection, the group box (below) owns resizing so
+                  // everything scales as one body; individual handles are disabled.
+                  enableResizing={!(isMultiSelected && selectedWidgetIds.length > 1)}
                   dragGrid={[GRID_SNAP_PX, GRID_SNAP_PX]}
                   resizeGrid={[GRID_SNAP_PX, GRID_SNAP_PX]}
                   minWidth={80}
@@ -185,6 +281,30 @@ export default function Canvas(): React.JSX.Element {
                       if (ids.includes(w.id)) snap[w.id] = { x: w.rect.x, y: w.rect.y };
                     });
                     multiDragStartPositions.current = snap;
+                  }}
+                  // Rnd only animates the widget you grabbed. Without this the
+                  // rest of the selection sat still until the drop, so you were
+                  // aiming a group move while seeing only one piece of it.
+                  // The grabbed one is left to Rnd — writing its position here
+                  // would fight the drag it is already running.
+                  onDrag={(_e, d) => {
+                    if (!activePageId) return;
+                    const liveIds = useStore.getState().selectedWidgetIds;
+                    if (liveIds.length <= 1 || !liveIds.includes(widget.id)) return;
+                    const origPos = multiDragStartPositions.current[widget.id];
+                    if (!origPos) return;
+                    const dx = d.x - origPos.x;
+                    const dy = d.y - origPos.y;
+                    for (const id of liveIds) {
+                      if (id === widget.id) continue;
+                      const start = multiDragStartPositions.current[id];
+                      if (start) {
+                        updateWidgetRect(activePageId, id, {
+                          x: Math.max(0, start.x + dx),
+                          y: Math.max(0, start.y + dy),
+                        });
+                      }
+                    }
                   }}
                   onResizeStart={() => {
                     captureHistory();
@@ -267,6 +387,12 @@ export default function Canvas(): React.JSX.Element {
                   <div
                     style={{ width: '100%', height: '100%', position: 'relative' }}
                     onDoubleClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => startLongPress(e, widget.id)}
+                    onPointerMove={moveLongPress}
+                    onPointerUp={cancelLongPress}
+                    onPointerCancel={cancelLongPress}
+                    // Windows fires a native context menu on touch-hold; ours replaces it.
+                    onContextMenu={(e) => e.preventDefault()}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (e.shiftKey) {
@@ -308,6 +434,26 @@ export default function Canvas(): React.JSX.Element {
                 </Rnd>
               );
             })}
+
+          {/* Group resize box — scales the whole multi-selection as one body */}
+          {page && activePageId && selectedWidgetIds.length > 1 && (
+            <GroupResizeBox
+              widgets={page.widgets.filter((w) => selectedWidgetIds.includes(w.id))}
+              scale={scale}
+              activePageId={activePageId}
+              pageW={pageWidth}
+              pageH={pageHeight}
+            />
+          )}
+
+          {/* Marquee selection rectangle */}
+          {marquee && (
+            <div style={{
+              position: 'absolute', left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h,
+              border: `${1 / scale}px solid #64c8ff`, background: 'rgba(100,200,255,0.12)',
+              pointerEvents: 'none', zIndex: 998,
+            }} />
+          )}
         </div>
       </div>
 
@@ -317,6 +463,36 @@ export default function Canvas(): React.JSX.Element {
           <span style={{ marginLeft: 8, color: '#64c8ff' }}>{selectedWidgetIds.length} selected</span>
         )}
       </div>
+
+      {deleteMenu && (
+        <>
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 2000 }}
+            onPointerDown={() => setDeleteMenu(null)}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <div
+            style={{
+              position: 'fixed', zIndex: 2001,
+              // Keep the popup on screen when the widget is near an edge.
+              left: Math.min(deleteMenu.x, window.innerWidth - 200),
+              top: Math.min(deleteMenu.y, window.innerHeight - 130),
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 6, padding: 8, width: 180,
+              boxShadow: '0 8px 30px rgba(0,0,0,0.7)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button style={styles.menuDelete} onClick={confirmDelete}>
+              🗑 Delete {deleteMenu.ids.length > 1 ? `${deleteMenu.ids.length} widgets` : 'widget'}
+            </button>
+            <button style={styles.menuCancel} onClick={() => setDeleteMenu(null)}>
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
 
       {isWidgetPickerOpen && <WidgetPicker />}
       {editingWidgetId && activePageId && (
@@ -330,10 +506,26 @@ export default function Canvas(): React.JSX.Element {
   );
 }
 
+const LONG_PRESS_MS = 2000;
+// How far a finger may drift before the hold counts as a drag instead.
+const LONG_PRESS_SLOP = 12;
+
 const styles: Record<string, React.CSSProperties> = {
   outer: {
     flex: 1, position: 'relative', overflow: 'hidden', outline: 'none',
     background: 'var(--color-bg)',
+  },
+  menuDelete: {
+    width: '100%', minHeight: 44, marginBottom: 6,
+    background: '#3a1a1a', color: '#ff6b6b',
+    border: '1px solid #cc3333', borderRadius: 4,
+    fontSize: 14, fontWeight: 600, cursor: 'pointer',
+  },
+  menuCancel: {
+    width: '100%', minHeight: 40,
+    background: 'var(--color-surface-2)', color: 'var(--color-text-dim)',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: 13, cursor: 'pointer',
   },
   editBtn: {
     position: 'absolute', top: 4, right: 4,
@@ -349,3 +541,111 @@ const styles: Record<string, React.CSSProperties> = {
     pointerEvents: 'none',
   },
 };
+
+// ─── Group resize box ─────────────────────────────────────────────────────────
+// A selection bounding box with corner handles. Dragging a handle scales EVERY
+// selected widget as one rigid body around the opposite corner (the anchor), so
+// the whole group grows/shrinks together and stays glued.
+type Corner = 'nw' | 'ne' | 'sw' | 'se';
+
+function GroupResizeBox({ widgets, scale, activePageId, pageW, pageH }: {
+  widgets: Widget[];
+  scale: number;
+  activePageId: string;
+  pageW: number;
+  pageH: number;
+}): React.JSX.Element | null {
+  const updateWidgetRect = useStore((s) => s.updateWidgetRect);
+  const captureHistory   = useStore((s) => s.captureHistory);
+  const drag = useRef<{
+    anchorX: number; anchorY: number; bw: number; bh: number; corner: Corner;
+    startX: number; startY: number;
+    rects: { id: string; x: number; y: number; width: number; height: number }[];
+  } | null>(null);
+
+  if (widgets.length < 2) return null;
+
+  const minX = Math.min(...widgets.map((w) => w.rect.x));
+  const minY = Math.min(...widgets.map((w) => w.rect.y));
+  const maxX = Math.max(...widgets.map((w) => w.rect.x + w.rect.width));
+  const maxY = Math.max(...widgets.map((w) => w.rect.y + w.rect.height));
+  const bw = Math.max(1, maxX - minX);
+  const bh = Math.max(1, maxY - minY);
+
+  function start(e: React.PointerEvent, corner: Corner) {
+    e.stopPropagation();
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    captureHistory();
+    drag.current = {
+      corner,
+      anchorX: corner.includes('w') ? maxX : minX,   // opposite corner stays fixed
+      anchorY: corner.includes('n') ? maxY : minY,
+      bw, bh,
+      startX: e.clientX, startY: e.clientY,
+      rects: widgets.map((w) => ({ id: w.id, ...w.rect })),
+    };
+  }
+  function move(e: React.PointerEvent) {
+    const d = drag.current;
+    if (!d) return;
+    const dx = (e.clientX - d.startX) / scale;   // screen px → page px
+    const dy = (e.clientY - d.startY) / scale;
+    const rawW = d.corner.includes('e') ? d.bw + dx : d.bw - dx;
+    const rawH = d.corner.includes('s') ? d.bh + dy : d.bh - dy;
+    // Clamp the GROUP scale (not each widget) so the whole thing stays a rigid
+    // body — proportional scaling can never make non-overlapping widgets overlap.
+    // The floor keeps the smallest widget at/above the min size.
+    const minW = Math.min(...d.rects.map((r) => r.width));
+    const minH = Math.min(...d.rects.map((r) => r.height));
+    // Max scale keeps the whole group inside the page: from the fixed anchor,
+    // the group can only grow until its far edge reaches the page border.
+    const maxSx = (d.corner.includes('e') ? (pageW - d.anchorX) : d.anchorX) / d.bw;
+    const maxSy = (d.corner.includes('s') ? (pageH - d.anchorY) : d.anchorY) / d.bh;
+    const sx = Math.min(maxSx, Math.max(40 / minW, rawW / d.bw));
+    const sy = Math.min(maxSy, Math.max(30 / minH, rawH / d.bh));
+    for (const r of d.rects) {
+      updateWidgetRect(activePageId, r.id, {
+        x: Math.round(d.anchorX + (r.x - d.anchorX) * sx),
+        y: Math.round(d.anchorY + (r.y - d.anchorY) * sy),
+        width:  Math.round(r.width  * sx),
+        height: Math.round(r.height * sy),
+      });
+    }
+  }
+  function end() { drag.current = null; }
+
+  const hs = Math.max(8, 12 / scale);   // keep handles grabbable at any zoom
+  const bw2 = 2 / scale;
+  const corners: { c: Corner; left: number; top: number; cursor: string }[] = [
+    { c: 'nw', left: 0,  top: 0,  cursor: 'nwse-resize' },
+    { c: 'ne', left: bw, top: 0,  cursor: 'nesw-resize' },
+    { c: 'sw', left: 0,  top: bh, cursor: 'nesw-resize' },
+    { c: 'se', left: bw, top: bh, cursor: 'nwse-resize' },
+  ];
+
+  return (
+    <div style={{
+      position: 'absolute', left: minX, top: minY, width: bw, height: bh,
+      border: `${bw2}px dashed #64c8ff`, boxSizing: 'border-box',
+      pointerEvents: 'none', zIndex: 999,
+    }}>
+      {corners.map((h) => (
+        <div
+          key={h.c}
+          onPointerDown={(e) => start(e, h.c)}
+          onPointerMove={move}
+          onPointerUp={end}
+          onPointerCancel={end}
+          onClick={(e) => e.stopPropagation()}   // keep the group selected after resizing
+          style={{
+            position: 'absolute', left: h.left, top: h.top,
+            width: hs, height: hs, marginLeft: -hs / 2, marginTop: -hs / 2,
+            background: '#64c8ff', border: `${bw2}px solid #fff`, borderRadius: 2,
+            cursor: h.cursor, pointerEvents: 'auto', zIndex: 1000,
+          }}
+        />
+      ))}
+    </div>
+  );
+}

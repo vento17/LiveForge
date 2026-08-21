@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ButtonGridWidget } from '../../../shared/types/project';
+import { BEHAVIOR_BADGE } from './behavior';
 
 export default function ButtonGridDesign({ widget }: { widget: ButtonGridWidget }): React.JSX.Element {
   const { countX, countY, spacingX, spacingY, style, cells } = widget;
@@ -23,6 +24,7 @@ export default function ButtonGridDesign({ widget }: { widget: ButtonGridWidget 
             background: 'rgba(0,0,0,0.3)',
             borderRadius: 4,
             border: `1px solid ${(cell?.color ?? style.foregroundColor)}33`,
+            position: 'relative',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -32,6 +34,14 @@ export default function ButtonGridDesign({ widget }: { widget: ButtonGridWidget 
                 {cell?.label ?? `B${i + 1}`}
               </span>
             )}
+            <span style={{
+              position: 'absolute', left: 3, bottom: 1,
+              fontSize: Math.max(8, Math.round((style.fontSize ?? 12) * 0.62)),
+              lineHeight: 1, fontWeight: 700, fontFamily: 'monospace',
+              color: cell?.color ?? style.foregroundColor, opacity: 0.55,
+            }}>
+              {BEHAVIOR_BADGE[cell?.behavior ?? 'momentary']}
+            </span>
           </div>
         );
       })}

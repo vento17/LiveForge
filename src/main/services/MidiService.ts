@@ -3,8 +3,10 @@ import type { MidiPortInfo } from '../../shared/types/runtime';
 import type { MidiInputEventPayload, MtcFramePayload } from '../../shared/types/ipc';
 
 export class MidiService {
-  private output = new midi.Output();
+  private output = new midi.Output();          // primary output ('primary')
   private input  = new midi.Input();
+  private extraOutputs = new Map<string, midi.Output>();  // id → additional named output port
+  private extraInputs:  midi.Input[]  = [];   // additional MIDI input ports
   private inputCallback: ((evt: MidiInputEventPayload) => void) | null = null;
   private mtcCallback:   ((frame: MtcFramePayload) => void) | null = null;
   private clockTimer: NodeJS.Timeout | null = null;
@@ -32,23 +34,30 @@ export class MidiService {
         return;
       }
 
-      if (!this.inputCallback) return;
-      const data1   = msg[1] ?? 0;
-      const data2   = msg[2] ?? 0;
-      const ch      = (status & 0x0f) + 1;
-      const nibble  = status & 0xf0;
-
-      let messageType: MidiInputEventPayload['messageType'];
-      if      (nibble === 0x90) messageType = data2 > 0 ? 'noteOn' : 'noteOff';
-      else if (nibble === 0x80) messageType = 'noteOff';
-      else if (nibble === 0xb0) messageType = 'controlChange';
-      else if (nibble === 0xe0) messageType = 'pitchBend';
-      else if (nibble === 0xc0) messageType = 'programChange';
-      else if (nibble === 0xa0) messageType = 'aftertouch';
-      else return;
-
-      this.inputCallback({ channel: ch, messageType, number: data1, value: data2 });
+      this.routeInput(msg);
     });
+  }
+
+  // Parse a channel-voice message and forward it to the input callback. Shared by
+  // the primary input and every extra input port so they merge into one stream.
+  private routeInput(msg: number[]): void {
+    if (!this.inputCallback) return;
+    const status  = msg[0];
+    const data1   = msg[1] ?? 0;
+    const data2   = msg[2] ?? 0;
+    const ch      = (status & 0x0f) + 1;
+    const nibble  = status & 0xf0;
+
+    let messageType: MidiInputEventPayload['messageType'];
+    if      (nibble === 0x90) messageType = data2 > 0 ? 'noteOn' : 'noteOff';
+    else if (nibble === 0x80) messageType = 'noteOff';
+    else if (nibble === 0xb0) messageType = 'controlChange';
+    else if (nibble === 0xe0) messageType = 'pitchBend';
+    else if (nibble === 0xc0) messageType = 'programChange';
+    else if (nibble === 0xa0) messageType = 'aftertouch';
+    else return;
+
+    this.inputCallback({ channel: ch, messageType, number: data1, value: data2 });
   }
 
   private parseMtcQF(data: number): void {
@@ -103,8 +112,9 @@ export class MidiService {
     }));
   }
 
-  openPort(portName: string, virtual: boolean): { ok: boolean } {
+  openPort(portName: string, virtual: boolean, extraOutputs: Array<{ id: string; portName: string }> = []): { ok: boolean } {
     try {
+      this.closeExtraOutputs();
       this.output.closePort();
       if (virtual) {
         this.output.openVirtualPort(portName);
@@ -113,37 +123,70 @@ export class MidiService {
         if (!match) return { ok: false };
         this.output.openPort(match.index);
       }
+      // Additional named output ports (by name).
+      const ports = this.listPorts();
+      for (const o of extraOutputs) {
+        const trimmed = (o.portName ?? '').trim();
+        if (!trimmed) continue;
+        const m = ports.find((p) => p.name === trimmed);
+        if (!m) continue;
+        const out = new midi.Output();
+        try { out.openPort(m.index); this.extraOutputs.set(o.id, out); }
+        catch { try { out.closePort(); } catch { /* */ } }
+      }
       return { ok: true };
     } catch {
       return { ok: false };
     }
   }
 
+  private closeExtraOutputs(): void {
+    for (const out of this.extraOutputs.values()) { try { out.closePort(); } catch { /* */ } }
+    this.extraOutputs.clear();
+  }
+
+  // Resolve an outputId to a specific output port (primary when unset/unknown).
+  private resolveOut(outputId: string | undefined): midi.Output {
+    if (outputId && outputId !== 'primary') {
+      const out = this.extraOutputs.get(outputId);
+      if (out) return out;
+    }
+    return this.output;
+  }
+
+  private sendTo(outputId: string | undefined, bytes: number[]): void {
+    try { this.resolveOut(outputId).sendMessage(bytes); }
+    catch (err) { console.error('[MidiService] send failed:', err); }
+  }
+
+  // Send a raw MIDI message to the primary output and every extra output (for clock sync).
+  private sendAll(bytes: number[]): void {
+    try { this.output.sendMessage(bytes); } catch { /* port closed */ }
+    for (const out of this.extraOutputs.values()) { try { out.sendMessage(bytes); } catch { /* port closed */ } }
+  }
+
   closePort(): void {
     this.output.closePort();
+    this.closeExtraOutputs();
   }
 
-  sendCC(channel: number, cc: number, value: number): void {
-    try { this.output.sendMessage([0xb0 | (channel - 1), cc, value]); }
-    catch (err) { console.error('[MidiService] sendCC failed:', err); }
+  sendCC(channel: number, cc: number, value: number, outputId?: string): void {
+    this.sendTo(outputId, [0xb0 | (channel - 1), cc, value]);
   }
 
-  sendNote(channel: number, note: number, velocity: number, on: boolean): void {
-    try { this.output.sendMessage([(on ? 0x90 : 0x80) | (channel - 1), note, velocity]); }
-    catch (err) { console.error('[MidiService] sendNote failed:', err); }
+  sendNote(channel: number, note: number, velocity: number, on: boolean, outputId?: string): void {
+    this.sendTo(outputId, [(on ? 0x90 : 0x80) | (channel - 1), note, velocity]);
   }
 
-  sendPitchBend(channel: number, value: number): void {
-    try { this.output.sendMessage([0xe0 | (channel - 1), value & 0x7f, (value >> 7) & 0x7f]); }
-    catch (err) { console.error('[MidiService] sendPB failed:', err); }
+  sendPitchBend(channel: number, value: number, outputId?: string): void {
+    this.sendTo(outputId, [0xe0 | (channel - 1), value & 0x7f, (value >> 7) & 0x7f]);
   }
 
   startClock(bpm: number): void {
     this.stopClock();
     const intervalMs = 60000 / (bpm * 24);
     this.clockTimer = setInterval(() => {
-      try { this.output.sendMessage([0xf8]); }
-      catch { /* ignore if port closed */ }
+      this.sendAll([0xf8]);
     }, intervalMs);
   }
 
@@ -164,16 +207,37 @@ export class MidiService {
     }));
   }
 
-  openInputPort(portName: string): { ok: boolean } {
+  openInputPort(portName: string, extraPorts: string[] = []): { ok: boolean } {
     try {
+      this.closeExtraInputs();
       this.input.closePort();
       const match = this.listInputPorts().find((p) => p.name === portName);
       if (!match) return { ok: false };
       this.input.openPort(match.index);
+      // Additional input ports: forward only channel-voice messages (MTC/SysEx
+      // stay on the primary port to avoid double-parsing from multiple sources).
+      const ports = this.listInputPorts();
+      for (const name of extraPorts) {
+        const trimmed = (name ?? '').trim();
+        if (!trimmed || trimmed === portName) continue;
+        const m = ports.find((p) => p.name === trimmed);
+        if (!m) continue;
+        const inp = new midi.Input();
+        try {
+          inp.on('message', (_d, msg) => this.routeInput(msg));
+          inp.openPort(m.index);
+          this.extraInputs.push(inp);
+        } catch { try { inp.closePort(); } catch { /* */ } }
+      }
       return { ok: true };
     } catch {
       return { ok: false };
     }
+  }
+
+  private closeExtraInputs(): void {
+    for (const inp of this.extraInputs) { try { inp.closePort(); } catch { /* */ } }
+    this.extraInputs = [];
   }
 
   onInputMessage(cb: (evt: MidiInputEventPayload) => void): void {

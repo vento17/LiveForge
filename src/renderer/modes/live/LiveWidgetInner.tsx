@@ -2,7 +2,7 @@ import React from 'react';
 import type {
   Widget, CuesWidget, TimelineWidget, SpoutInputWidget, NdiInputWidget, SubmastersWidget,
   RouterWidget, AudioAnalyserWidget, SoundPlayerWidget, LfoWidget, MathWidget, ValueDisplayWidget,
-  MasterLevelWidget, InstanceWidget,
+  MasterLevelWidget, InstanceWidget, ManualWidget, KeyboardWidget,
 } from '../../../shared/types/project';
 import SliderBankLive from '../../widgets/SliderBank/SliderBankLive';
 import ButtonGridLive from '../../widgets/ButtonGrid/ButtonGridLive';
@@ -25,6 +25,8 @@ import MathWidgetLive from '../../widgets/MathWidget/MathWidgetLive';
 import ValueDisplayLive from '../../widgets/ValueDisplay/ValueDisplayLive';
 import MasterLevelLive from '../../widgets/MasterLevel/MasterLevelLive';
 import InstanceLive from '../../widgets/Instance/InstanceLive';
+import ManualLive from '../../widgets/Manual/ManualLive';
+import KeyboardLive from '../../widgets/Keyboard/KeyboardLive';
 
 // The live rendering of a single widget's inner content (no positioning wrapper).
 // Shared by LiveCanvas and by the Instance widget (which renders its source here).
@@ -51,6 +53,8 @@ export default function LiveWidgetInner({ widget }: { widget: Widget }): React.J
     case 'valueDisplay':  return <ValueDisplayLive widget={widget as ValueDisplayWidget} />;
     case 'masterLevel':   return <MasterLevelLive widget={widget as MasterLevelWidget} />;
     case 'instance':      return <InstanceLive widget={widget as InstanceWidget} />;
+    case 'keyboard':      return <KeyboardLive widget={widget as KeyboardWidget} />;
+    case 'manual':        return <ManualLive widget={widget as ManualWidget} />;
     default:              return null;
   }
 }

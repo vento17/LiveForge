@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import type { MathWidget, MathOperation } from '../../../shared/types/project';
 import { useStore } from '../../store';
 import { dispatchValue } from '../../ipc/dispatch';
+import { remapRange } from '../base/range';
 
 function applyOp(a: number, b: number, op: MathOperation): number {
   switch (op) {
@@ -25,7 +26,7 @@ export default function MathWidgetLive({ widget }: { widget: MathWidget }): Reac
       const w = widgetRef.current;
       const a = state.runtime.widgets[w.sourceAWidgetId]?.cells[w.sourceACellIndex]?.value ?? 0;
       const b = state.runtime.widgets[w.sourceBWidgetId]?.cells[w.sourceBCellIndex]?.value ?? 0;
-      let result = applyOp(a, b, w.operation) * w.scale + w.offset;
+      let result = remapRange(applyOp(a, b, w.operation), w);
       if (w.clampOutput) result = Math.max(0, Math.min(1, result));
 
       const current = state.runtime.widgets[w.id]?.cells[0]?.value;

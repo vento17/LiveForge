@@ -17,7 +17,7 @@ export default function MathWidgetDesign({ widget }: { widget: MathWidget }): Re
         <span style={{ fontSize: 11, color: '#555' }}>{needsB(widget.operation) ? 'B' : ''}</span>
       </div>
       <div style={{ fontSize: 9, color: '#444' }}>
-        {widget.operation} · ×{widget.scale} +{widget.offset}
+        {widget.operation} · {widget.inMin ?? 0}–{widget.inMax ?? 1} → {widget.outMin ?? 0}–{widget.outMax ?? 1}
       </div>
     </div>
   );

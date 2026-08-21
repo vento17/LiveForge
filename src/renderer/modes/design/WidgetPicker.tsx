@@ -14,7 +14,8 @@ interface WidgetOption {
 const IS_WINDOWS = /Win/i.test(navigator.userAgent) || /Win/i.test(navigator.platform);
 
 // Ordered in pairs, cascading from static → controls → modulators → sequencers →
-// audio → video in → routing → masters → scenes, with Value Display alone last.
+// audio → video in → routing → masters → scenes, then Value Display + Keyboard,
+// with Manual alone on the last line.
 const WIDGET_OPTIONS: WidgetOption[] = [
   { kind: 'imageWidget',   label: 'Image',          description: 'PNG/JPG overlay, click-through — sits under or over the widgets.' },
   { kind: 'textWidget',    label: 'Text',           description: 'Static label with custom font, colour, alignment and frame.' },
@@ -46,7 +47,10 @@ const WIDGET_OPTIONS: WidgetOption[] = [
   { kind: 'cues',          label: 'Cues',           description: 'Snapshot and recall the whole state — values and links — with fade times.' },
   { kind: 'instance',      label: 'Instance',       description: 'Bound copy of another widget — shares the exact same value across pages.' },
 
-  { kind: 'valueDisplay',  label: 'Value Display',  description: 'Read-only numeric readout of any cell from another widget (percent, raw or MIDI).', full: true },
+  { kind: 'valueDisplay',  label: 'Value Display',  description: 'Read-only numeric readout of any cell from another widget (percent, raw or MIDI).' },
+  { kind: 'keyboard',      label: 'Keyboard',       description: 'Bind computer keys as buttons — press the key or tap it on screen. Each key is linkable.' },
+
+  { kind: 'manual',        label: 'Manual',         description: 'Built-in documentation: a tab per settings section and a tab per widget, plus the shortcut list.', full: true },
 ];
 
 export default function WidgetPicker(): React.JSX.Element {

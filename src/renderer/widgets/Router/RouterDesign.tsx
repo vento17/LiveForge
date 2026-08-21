@@ -2,7 +2,8 @@ import React from 'react';
 import type { RouterWidget, RouterRow, Widget } from '../../../shared/types/project';
 import type { Mapping, OscMapping, MidiMapping, ArtNetMapping, SacnMapping, EnttecDmxMapping } from '../../../shared/types/mapping';
 import { useActivePage, useStore } from '../../store';
-import { cellLabel } from '../base/links';
+import { cellLabel, allCellsLabel } from '../base/links';
+import { remapRange, isIdentityRange } from '../base/range';
 
 function protocolDesc(mapping: Mapping): string {
   if (!mapping) return '';
@@ -44,7 +45,10 @@ function sourceLabel(row: RouterRow, src: Widget | undefined): { primary: string
   if (t === 'midiCC')   return { primary: 'MIDI CC',   secondary: `ch${row.midiChannel ?? 1} #${row.midiNumber ?? 0}` };
   if (t === 'midiNote') return { primary: 'MIDI Note', secondary: `ch${row.midiChannel ?? 1} #${row.midiNumber ?? 0}` };
   if (t === 'osc')      return { primary: 'OSC',       secondary: row.oscAddress ?? '—' };
-  return { primary: src ? src.label : '—', secondary: cellLabel(src, row.cellIndex) };
+  return {
+    primary: src ? src.label : '—',
+    secondary: row.allCells ? allCellsLabel(src) : cellLabel(src, row.cellIndex),
+  };
 }
 
 export default function RouterDesign({ widget }: { widget: RouterWidget }): React.JSX.Element {
@@ -58,6 +62,7 @@ export default function RouterDesign({ widget }: { widget: RouterWidget }): Reac
       for (const row of widget.rows) {
         const t = row.inputType ?? 'widget';
         if (t !== 'widget' || !row.widgetId) continue;
+        if (row.allCells) continue;   // no single value to track
         const cell = state.runtime.widgets[row.widgetId]?.cells[row.cellIndex];
         out[row.id] = cell ? (cell.value ?? (cell.active ? 1 : 0)) : 0;
       }
@@ -93,6 +98,9 @@ export default function RouterDesign({ widget }: { widget: RouterWidget }): Reac
           const src = page?.widgets.find((w) => w.id === row.widgetId);
           const lbl = sourceLabel(row, src);
           const v   = runtimeValues[row.id] ?? 0;
+          // An ALL source is many signals at once, so there is no single number
+          // to show — printing one would just be the first cell, misleadingly.
+          const showValue = !row.allCells;
 
           return (
             <div key={row.id}>
@@ -102,39 +110,49 @@ export default function RouterDesign({ widget }: { widget: RouterWidget }): Reac
                   {lbl.primary}
                   <span style={{ fontSize: fs - 2, color: '#777', fontWeight: 400 }}> · {lbl.secondary}</span>
                 </span>
-                {(row.inputType ?? 'widget') === 'widget' && (
+                {(row.inputType ?? 'widget') === 'widget' && showValue && (
                   <span style={{ fontSize: fs - 1, color: '#aaa', marginLeft: 8 }}>
                     {v.toFixed(3)}
                   </span>
                 )}
               </div>
 
-              {/* Output lines */}
+              {/* Output lines — each shows what IT sends, after its own range */}
               {row.outputs.map((out) => {
+                const ov = isIdentityRange(out) ? v : remapRange(v, out);
                 if (out.targetWidgetId) {
                   const tw = page?.widgets.find((w) => w.id === out.targetWidgetId);
+                  // A widget cell only ever holds 0–1, so show what it will land on.
+                  const cellV = Math.max(0, Math.min(1, ov));
                   return (
                     <div key={out.id}
                       style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginLeft: 10 }}>
                       <span style={{ fontSize: fs - 2, color: '#606060' }}>
-                        → {tw ? tw.label : '?'} · {cellLabel(tw, out.targetCellIndex ?? 0)}
+                        → {tw ? tw.label : '?'} · {out.targetAllCells ? allCellsLabel(tw) : cellLabel(tw, out.targetCellIndex ?? 0)}
                       </span>
-                      <span style={{ fontSize: fs - 2, color: '#555', marginLeft: 8 }}>
-                        {v.toFixed(3)}
-                      </span>
+                      {showValue && (
+                        <span style={{ fontSize: fs - 2, color: cellV !== ov ? '#8a6a3a' : '#555', marginLeft: 8 }}>
+                          {cellV.toFixed(3)}
+                        </span>
+                      )}
                     </div>
                   );
                 }
                 if (!out.mapping) return null;
+                // Negative and above-unity values are real on OSC; elsewhere the
+                // protocol clamps them, so flag that in the colour.
+                const clamped = out.mapping.type !== 'osc' && (ov < 0 || ov > 1);
                 return (
                   <div key={out.id}
                     style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginLeft: 10 }}>
                     <span style={{ fontSize: fs - 2, color: '#606060' }}>
                       → {protocolDesc(out.mapping)}
                     </span>
-                    <span style={{ fontSize: fs - 2, color: '#555', marginLeft: 8 }}>
-                      {scaledDisplay(v, out.mapping)}
-                    </span>
+                    {showValue && (
+                      <span style={{ fontSize: fs - 2, color: clamped ? '#8a6a3a' : '#555', marginLeft: 8 }}>
+                        {scaledDisplay(out.mapping.type === 'osc' ? ov : Math.max(0, Math.min(1, ov)), out.mapping)}
+                      </span>
+                    )}
                   </div>
                 );
               })}

@@ -8,6 +8,7 @@ import { bridge } from '../../ipc/bridge';
 import { cellCount } from '../utils';
 import CellLinkMenu from '../base/CellLinkMenu';
 import { useSlavedCells, SLAVE_OUTLINE } from '../base/useSlavedCells';
+import NumberInput from '../base/NumberInput';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -288,6 +289,11 @@ export default function CuesLive({ widget }: { widget: CuesWidget }): React.JSX.
 
   const dropLine = { height: 2, background: '#fff', borderRadius: 1, margin: '1px 0', flexShrink: 0 } as const;
   const iconBtn  = { background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', lineHeight: 1, fontSize: 11 } as const;
+  const fadeStep = {
+    background: '#141414', border: '1px solid #252525', color: '#999',
+    borderRadius: 2, width: 20, height: 22, cursor: 'pointer',
+    fontSize: 13, lineHeight: 1, padding: 0, flexShrink: 0, fontFamily: 'inherit',
+  } as const;
   const navBtn: React.CSSProperties = {
     background: 'none',
     border: 'none',
@@ -401,16 +407,26 @@ export default function CuesLive({ widget }: { widget: CuesWidget }): React.JSX.
                     />
                   </div>
 
-                  {/* Fade time */}
+                  {/* Fade time — the native spinner sat on top of the number in
+                      a field this narrow, so the steppers live outside it. */}
                   <span style={{ fontSize: 10, color: '#555', userSelect: 'none' }}>fade</span>
-                  <input
-                    type="number"
+                  <button
+                    onClick={(e) => { e.stopPropagation(); updateCue(cue.id, { fadeTime: Math.max(0, +(cue.fadeTime - 0.1).toFixed(2)) }); }}
+                    title="Shorter fade"
+                    style={fadeStep}
+                  >−</button>
+                  <NumberInput
                     min={0} max={60} step={0.1}
+                    spinners={false}
                     value={cue.fadeTime}
-                    onChange={(e) => updateCue(cue.id, { fadeTime: Math.max(0, parseFloat(e.target.value) || 0) })}
-                    onClick={(e) => e.stopPropagation()}
-                    style={{ width: 36, background: '#111', border: '1px solid #252525', color: '#aaa', fontSize: 10, borderRadius: 2, padding: '1px 3px', textAlign: 'right' }}
+                    onChange={(v) => updateCue(cue.id, { fadeTime: Math.max(0, v) })}
+                    style={{ width: 56, background: '#111', border: '1px solid #252525', color: '#ccc', fontSize: 12, borderRadius: 2, padding: '3px 5px', textAlign: 'center' }}
                   />
+                  <button
+                    onClick={(e) => { e.stopPropagation(); updateCue(cue.id, { fadeTime: Math.min(60, +(cue.fadeTime + 0.1).toFixed(2)) }); }}
+                    title="Longer fade"
+                    style={fadeStep}
+                  >+</button>
                   <span style={{ fontSize: 10, color: '#555', userSelect: 'none' }}>s</span>
 
                   {/* Rename */}

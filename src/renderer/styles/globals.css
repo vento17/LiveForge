@@ -38,3 +38,13 @@ body {
   touch-action: none;
 }
 
+
+/* Number fields that carry their own − / + buttons. Chromium draws the native
+   spinner as a pseudo-element, which an inline style cannot reach — and
+   `appearance: textfield` alone no longer hides it — so it needs a real rule. */
+.lf-no-spin::-webkit-inner-spin-button,
+.lf-no-spin::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}

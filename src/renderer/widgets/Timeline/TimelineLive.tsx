@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { nanoid } from 'nanoid';
 import type {
   TimelineWidget, TimelineTrack,
-  ValueTrack, ColorTrack, SoundTrack, TrigTrack,
+  ValueTrack, ColorTrack, SoundTrack, TrigTrack, CueTrack, CueRegion, WaitTrack, WaitPoint,
   ValueKeyframe, ColorKeyframe, TrigMarker, TimelineMarker,
   TimelineEasing, LtcAudioConnection, SoundRegion, AudioOutputConnection,
 } from '../../../shared/types/project';
@@ -11,11 +11,13 @@ import type { MtcFramePayload } from '../../../shared/types/ipc';
 import { useStore } from '../../store';
 import { dispatchValue } from '../../ipc/dispatch';
 import { bridge } from '../../ipc/bridge';
-import { timelineTrigCells } from '../utils';
+import { timelineTrigCells, timelineCueCells } from '../utils';
+import NumberInput from '../base/NumberInput';
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 const TRACK_H  = 56;
-const RULER_H  = 22;
+const RULER_H  = 32;   // room for a 9px tick plus a readable label under it
+const MARKER_H = 15;   // marker lane, kept clear of the ruler numbers
 const LEFT_W   = 128;
 const RIGHT_W  = 176;
 const HEAD_H   = 50;
@@ -28,6 +30,20 @@ function fmt(sec: number): string {
   const s  = Math.floor(sec % 60);
   const ds = Math.floor((sec % 1) * 10);
   return `${m}:${String(s).padStart(2, '0')}.${ds}`;
+}
+
+// Ruler label. In frames it reads as timecode (m:ss:ff); in seconds the decimal
+// only appears once the step is fine enough to need it.
+function fmtRuler(sec: number, unit: 'sec' | 'frames', fps: number, step: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  if (unit === 'frames') {
+    const f = Math.round((sec - Math.floor(sec)) * fps) % Math.round(fps);
+    return `${m}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+  }
+  if (step >= 1) return `${m}:${String(s).padStart(2, '0')}`;
+  const dec = step >= 0.1 ? 1 : 2;
+  return `${m}:${String(s).padStart(2, '0')}.${String(Math.round((sec % 1) * 10 ** dec)).padStart(dec, '0')}`;
 }
 
 function fmtDur(sec: number): string {
@@ -153,6 +169,34 @@ function buildColorGradient(kfs: ColorKeyframe[]): string {
   return `linear-gradient(to right, ${stops.join(', ')})`;
 }
 
+const TRACK_ICON: Record<string, string> = {
+  value: '◆', color: '●', trig: '▲', sound: '♪', cue: '▮', wait: '⏸',
+};
+const TRACK_KIND_LABEL: Record<string, string> = {
+  value: 'Value track', color: 'Color track', trig: 'Trig track',
+  cue: 'Cue track', wait: 'Wait track', sound: 'Sound track',
+};
+function trackColor(t: TimelineTrack): string {
+  if (t.kind === 'value') return (t as ValueTrack).color;
+  if (t.kind === 'color') return '#c8a040';
+  if (t.kind === 'trig')  return (t as TrigTrack).color;
+  if (t.kind === 'wait')  return (t as WaitTrack).color;
+  if (t.kind === 'cue')   return (t as CueTrack).cues[0]?.color ?? '#4a9fdf';
+  return '#4a9f6a';
+}
+
+// Cue blocks cycle through these so consecutive blocks never look alike.
+const CUE_COLORS = ['#4a9fdf', '#5fbf7f', '#d0b040', '#c060c0', '#e08040', '#40b8b8'];
+
+// Which cue block contains tNorm: the last block that starts at or before it.
+function activeCueIndex(cues: CueRegion[], tNorm: number): number {
+  let idx = -1;
+  for (let i = 0; i < cues.length; i++) {
+    if (cues[i].time <= tNorm) idx = i; else break;
+  }
+  return idx;
+}
+
 function getSoundRegions(t: SoundTrack): SoundRegion[] {
   if (t.regions && t.regions.length > 0) return t.regions;
   return [{ id: t.id + '_r', offset: t.offset, trimStart: t.trimStart, trimEnd: t.trimEnd }];
@@ -237,9 +281,11 @@ interface TrackRowProps {
   onPatchKf: (kfId: string, patch: Partial<ValueKeyframe>) => void;
   onCutTrack: (time: number) => void;
   onUpdateTrack: (patch: Partial<TimelineTrack>) => void;
+  onSplitCue: (time: number) => void;
+  onAddWait: (time: number) => void;
 }
 
-function TrackRow({ track, isSelected, selectedKfId, tNorm, wf, wfLoading, toolMode, duration, trackHeight, onSelect, onSelectKf, onAddKf, onMoveKf, onPatchKf, onCutTrack, onUpdateTrack }: TrackRowProps) {
+function TrackRow({ track, isSelected, selectedKfId, tNorm, wf, wfLoading, toolMode, duration, trackHeight, onSelect, onSelectKf, onAddKf, onMoveKf, onPatchKf, onCutTrack, onUpdateTrack, onSplitCue, onAddWait }: TrackRowProps) {
   const rowRef     = useRef<HTMLDivElement>(null);
   const dragRef    = useRef<{ kfId: string; origTime: number; origValue: number; startX: number; startY: number } | null>(null);
   const sndDragRef = useRef<{ kind: 'move' | 'trimL' | 'trimR'; regionId: string; origOffset: number; origTrimStart: number; origTrimEnd: number; startX: number } | null>(null);
@@ -265,6 +311,22 @@ function TrackRow({ track, isSelected, selectedKfId, tNorm, wf, wfLoading, toolM
       const rect = e.currentTarget.getBoundingClientRect();
       const t = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       onAddKf(t, 0);
+      return;
+    }
+    if (track.kind === 'cue') {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const t = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      // Ctrl-click cuts (double-click does too, below); a plain click selects
+      // the block you clicked so you can rename or colour it.
+      if (e.ctrlKey || e.metaKey) { onSplitCue(t); return; }
+      const idx = activeCueIndex((track as CueTrack).cues, t);
+      if (idx >= 0) onSelectKf((track as CueTrack).cues[idx].id);
+      return;
+    }
+    if (track.kind === 'wait') {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const t = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      onAddWait(t);
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
@@ -352,7 +414,73 @@ function TrackRow({ track, isSelected, selectedKfId, tNorm, wf, wfLoading, toolM
       onPointerMove={handleRowMove}
       onPointerUp={handleRowUp}
       onPointerCancel={handleRowUp}
+      onDoubleClick={(e) => {
+        if (track.kind !== 'cue') return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        onSplitCue(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
+      }}
     >
+      {/* Cue blocks — the whole timeline is always covered */}
+      {track.kind === 'cue' && (track as CueTrack).cues.map((c, i, arr) => {
+        const end = i + 1 < arr.length ? arr[i + 1].time : 1;
+        const isLive = tNorm >= c.time && tNorm < end + (end === 1 ? 0.0001 : 0);
+        const isSel  = selectedKfId === c.id;
+        return (
+          <div
+            key={c.id}
+            style={{
+              position: 'absolute', top: 2, bottom: 2,
+              left: `${c.time * 100}%`, width: `${(end - c.time) * 100}%`,
+              background: isLive ? c.color : `${c.color}33`,
+              borderLeft: i === 0 ? undefined : `2px solid ${c.color}`,
+              boxShadow: isSel ? 'inset 0 0 0 2px #fff' : undefined,
+              borderRadius: 2, overflow: 'hidden',
+              display: 'flex', alignItems: 'center', pointerEvents: 'none',
+            }}
+          >
+            <span style={{
+              fontSize: 10, padding: '0 6px', whiteSpace: 'nowrap',
+              color: isLive ? '#000' : '#bbb', fontWeight: isLive ? 700 : 400,
+              overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {c.name}
+            </span>
+          </div>
+        );
+      })}
+
+      {/* Wait points — playback parks here until you continue */}
+      {track.kind === 'wait' && (track as WaitTrack).points.map((p) => {
+        const isSel = selectedKfId === p.id;
+        const tint  = p.bypass ? '#555555' : (track as WaitTrack).color;
+        return (
+          <div
+            key={p.id}
+            onPointerDown={(e) => { e.stopPropagation(); onSelectKf(p.id); }}
+            style={{
+              position: 'absolute', top: 0, bottom: 0, left: `${p.time * 100}%`,
+              width: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <div style={{
+              position: 'absolute', top: 2, bottom: 2, left: -1, width: 2,
+              background: tint, opacity: p.bypass ? 0.4 : (isSel ? 1 : 0.7),
+            }} />
+            <div style={{
+              position: 'absolute', top: 4,
+              display: 'flex', gap: 2, padding: '2px 4px', borderRadius: 2,
+              background: '#0d0d0d', border: `1px solid ${tint}`,
+              boxShadow: isSel ? '0 0 0 2px #fff' : undefined, cursor: 'pointer',
+              transform: 'translateX(-50%)', alignItems: 'center',
+              opacity: p.bypass ? 0.55 : 1,
+            }}>
+              <span style={{ width: 2, height: 8, background: tint, display: 'block' }} />
+              <span style={{ width: 2, height: 8, background: tint, display: 'block' }} />
+              {p.name && <span style={{ fontSize: 9, color: p.bypass ? '#666' : '#999', marginLeft: 2, whiteSpace: 'nowrap' }}>{p.name}</span>}
+            </div>
+          </div>
+        );
+      })}
       {/* Color gradient — full opacity */}
       {track.kind === 'color' && (
         <div style={{ position: 'absolute', inset: 0, background: buildColorGradient((track as ColorTrack).keyframes), pointerEvents: 'none' }} />
@@ -722,6 +850,8 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
   const [clipboardKf, setClipboardKf] = useState<ValueKeyframe | ColorKeyframe | TrigMarker | null>(null);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [selMarkerId, setSelMarkerId] = useState<string | null>(null);
+  // Set while playback is parked on a wait point. Space continues from here.
+  const [waitingAt, setWaitingAt] = useState<{ trackId: string; pointId: string; time: number } | null>(null);
   const markerDragRef = useRef<{ id: string; startX: number; origTime: number } | null>(null);
   const [audioOutDevices, setAudioOutDevices] = useState<MediaDeviceInfo[]>([]);
 
@@ -733,6 +863,9 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
   const startTRef      = useRef(0);
   const startOffRef    = useRef(0);
   const prevTNormRef   = useRef(0);
+  // Last cue block reported per cue-track id, so we only fire on a change.
+  const lastCueRef     = useRef<Map<string, number>>(new Map());
+  const waitingRef     = useRef<typeof waitingAt>(null);
   const audioCtxRef    = useRef<AudioContext | null>(null);
   const abCache        = useRef<Map<string, AudioBuffer>>(new Map());
   const aSources       = useRef<Map<string, AudioBufferSourceNode>>(new Map());
@@ -912,19 +1045,80 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
   const selKfIdRef     = useRef(selKfId);     selKfIdRef.current     = selKfId;
   const tNormRef       = useRef(0);
 
+  // Every page stays mounted in Live mode, so every timeline in the project has
+  // this window listener attached. Without this gate one press of SPACE would
+  // start them all, and the arrows would scrub timelines you cannot even see.
+  const isOnActivePageRef = useRef(false);
+  isOnActivePageRef.current =
+    project.pages.find((p) => p.id === activePageId)?.widgets.some((w) => w.id === widget.id) ?? false;
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (!isOnActivePageRef.current) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
 
       if (e.key === ' ') {
+        // A Keyboard widget bound to Space claims the event first.
+        if (e.defaultPrevented) return;
         e.preventDefault();
-        if (isPlayingRef.current) stopPbRef.current();
-        else startPbRef.current();
+        if (isPlayingRef.current) { stopPbRef.current(); return; }
+        startPbRef.current();   // also continues when parked on a wait point
+        return;
+      }
+
+      // ── Playhead navigation ────────────────────────────────────────────
+      // Bare arrows nudge; the modifiers jump between landmarks. Arrows are the
+      // most frequent move, so they get the cheapest keys.
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        // A Keyboard widget bound to the arrows claims them first.
+        if (e.defaultPrevented) return;
+        e.preventDefault();
+        const w = widgetRef.current;
+        const dir = e.key === 'ArrowRight' ? 1 : -1;
+        const cur = tNormRef.current;
+        const eps = 1e-4;   // never land back on the landmark we already sit on
+
+        let targetNorm: number | undefined;
+        if (e.ctrlKey || e.metaKey) {
+          // Markers.
+          const times = (w.markers ?? []).map((m) => m.time).sort((a, b) => a - b);
+          targetNorm = dir > 0
+            ? times.find((t) => t > cur + eps)
+            : [...times].reverse().find((t) => t < cur - eps);
+        } else if (e.shiftKey) {
+          // Wait points — bypassed ones included, they are still landmarks.
+          const times = w.tracks
+            .filter((t) => t.kind === 'wait')
+            .flatMap((t) => (t as WaitTrack).points.map((p) => p.time))
+            .sort((a, b) => a - b);
+          targetNorm = dir > 0
+            ? times.find((t) => t > cur + eps)
+            : [...times].reverse().find((t) => t < cur - eps);
+        } else {
+          // One ruler subdivision, so the step follows the zoom.
+          const nudge = gridRef.current().minor;
+          targetNorm = Math.max(0, Math.min(1, cur + (dir * nudge) / Math.max(w.duration, 0.001)));
+        }
+        if (targetNorm === undefined) return;   // no landmark that way
+
+        stopPbRef.current();
+        if (waitingRef.current) { waitingRef.current = null; setWaitingAt(null); }
+        // Advance the ref straight away: tNormRef otherwise only catches up on
+        // the next render, so held or hammered arrows would all step from the
+        // same stale position and collapse into one move.
+        tNormRef.current = targetNorm;
+        setCurrentTime(targetNorm * w.duration);
         return;
       }
 
       const ctrl = e.ctrlKey || e.metaKey;
       if (!ctrl) return;
+
+      if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        addMarkerRef.current(tNormRef.current);
+        return;
+      }
 
       if (e.key === 'z' || e.key === 'Z') {
         e.preventDefault();
@@ -1042,7 +1236,10 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
     const off = currentTime;
     startOffRef.current  = off;
     startTRef.current    = performance.now();
+    // prevTNorm lands exactly on the wait point we were parked on, so the
+    // `prevTN < p.time` edge test cannot re-fire it and we simply carry on.
     prevTNormRef.current = off / Math.max(widgetRef.current.duration, 0.001);
+    if (waitingRef.current) { waitingRef.current = null; setWaitingAt(null); }
     setIsPlaying(true);
     void startAudio(off, session);
 
@@ -1067,8 +1264,33 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
         }
       }
 
+      const tNRaw = t / Math.max(w.duration, 0.001);
+
+      // A wait point stops the transport dead on the point. Checked before the
+      // outputs so we park exactly on it rather than a frame past.
+      let hitWait: { trackId: string; pointId: string; time: number } | null = null;
+      for (const track of w.tracks) {
+        if (track.kind !== 'wait' || track.muted) continue;
+        for (const p of (track as WaitTrack).points) {
+          if (p.bypass) continue;   // still a jump target, just not a stop
+          if (prevTN < p.time && tNRaw >= p.time) {
+            if (!hitWait || p.time < hitWait.time) hitWait = { trackId: track.id, pointId: p.id, time: p.time };
+          }
+        }
+      }
+      if (hitWait) {
+        const stopT = hitWait.time * w.duration;
+        prevTNormRef.current = hitWait.time;
+        setCurrentTime(stopT);
+        syncCuesRef.current(hitWait.time);
+        waitingRef.current = hitWait;
+        setWaitingAt(hitWait);
+        stopPbRef.current();
+        return;
+      }
+
       setCurrentTime(t);
-      const tN = t / Math.max(w.duration, 0.001);
+      const tN = tNRaw;
       prevTNormRef.current = tN;
 
       for (let ti = 0; ti < w.tracks.length; ti++) {
@@ -1109,6 +1331,59 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
     rafRef.current = requestAnimationFrame(tick);
   }
 
+  // ─── Cue blocks ────────────────────────────────────────────────────────────
+  // A cue is a STATE, not an edge: whichever block the playhead sits in is held
+  // at 1. Driven off currentTime rather than from the playback loop, so dragging
+  // the playhead into the middle of a block fires it exactly like playing does.
+
+  function syncCues(tN: number): void {
+    const w = widgetRef.current;
+    const cueCells = timelineCueCells(w);
+    const store = useStore.getState();
+
+    w.tracks.forEach((track, ti) => {
+      if (track.kind !== 'cue') return;
+      const ct = track as CueTrack;
+      if (ct.cues.length === 0) return;
+
+      // Muting a cue track releases whatever it was holding.
+      const idx = track.muted ? -1 : activeCueIndex(ct.cues, tN);
+      if (lastCueRef.current.get(ct.id) === idx) return;
+      const prev = lastCueRef.current.get(ct.id);
+      lastCueRef.current.set(ct.id, idx);
+
+      const cellOf = (ri: number): number => {
+        const at = cueCells.findIndex((c) => c.trackIndex === ti && c.regionIndex === ri);
+        return at >= 0 ? w.tracks.length + timelineTrigCells(w).length + at : -1;
+      };
+
+      if (prev !== undefined && prev >= 0) {
+        const old = ct.cues[prev];
+        const oldCell = cellOf(prev);
+        if (oldCell >= 0) store.setCellValue(w.id, oldCell, 0);
+        if (old?.mapping) dispatchValue(old.mapping, 0);
+      }
+      if (idx >= 0) {
+        const cur = ct.cues[idx];
+        const curCell = cellOf(idx);
+        if (curCell >= 0) store.setCellValue(w.id, curCell, 1);
+        if (cur?.mapping) dispatchValue(cur.mapping, 1);
+        // The track's own cell carries which block we are in, 1-based and
+        // normalised, so a Value Display or a link can read "cue 3".
+        store.setCellValue(w.id, ti, ct.cues.length > 1 ? idx / (ct.cues.length - 1) : 1);
+      } else {
+        store.setCellValue(w.id, ti, 0);
+      }
+    });
+  }
+
+  const syncCuesRef = useRef(syncCues);
+  syncCuesRef.current = syncCues;
+
+  useEffect(() => {
+    syncCuesRef.current(currentTime / Math.max(widget.duration, 0.001));
+  }, [currentTime, widget.duration, widget.tracks]);
+
   function stopPlayback() {
     audioSessionRef.current++; // invalidate any in-flight startAudio calls
     if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -1131,6 +1406,8 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
     // rect.width == totalW; rect.left accounts for scroll offset
     const t = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     if (isPlaying) stopPlayback();
+    // Moving the playhead by hand abandons the wait we were parked on.
+    if (waitingRef.current) { waitingRef.current = null; setWaitingAt(null); }
     setCurrentTime(t * widgetRef.current.duration);
   }
 
@@ -1147,13 +1424,18 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
     updateWidget(activePageId, widget.id, partial as never);
   }
 
-  function addTrack(kind: 'value' | 'color' | 'sound' | 'trig') {
+  function addTrack(kind: 'value' | 'color' | 'sound' | 'trig' | 'cue' | 'wait') {
     setShowAddMenu(false);
     const n = widget.tracks.filter((t) => t.kind === kind).length + 1;
     let t: TimelineTrack;
     if (kind === 'value')       t = { id: nanoid(), kind: 'value', label: `Value ${n}`, color: '#4a9fdf', keyframes: [], mapping: null } satisfies ValueTrack;
     else if (kind === 'color')  t = { id: nanoid(), kind: 'color', label: `Color ${n}`, keyframes: [], oscAddress: '/color' } satisfies ColorTrack;
     else if (kind === 'trig')   t = { id: nanoid(), kind: 'trig',  label: `Trig ${n}`,  color: '#e06040', keyframes: [], mapping: null } satisfies TrigTrack;
+    // A cue track is never empty: it always covers the whole timeline, starting
+    // as one block that you then cut.
+    else if (kind === 'cue')    t = { id: nanoid(), kind: 'cue', label: `Cues ${n}`,
+                                      cues: [{ id: nanoid(), time: 0, name: 'Cue 1', color: CUE_COLORS[0], mapping: null }] } satisfies CueTrack;
+    else if (kind === 'wait')   t = { id: nanoid(), kind: 'wait', label: `Wait ${n}`, color: '#d0b040', points: [] } satisfies WaitTrack;
     else                        t = { id: nanoid(), kind: 'sound', label: `Sound ${n}`, src: '', fileName: '', volume: 1, offset: 0 } satisfies SoundTrack;
     saveTracks([...widget.tracks, t]);
     setSelTrkId(t.id); setSelKfId(null);
@@ -1184,12 +1466,78 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
   // owns a source cell — keep the runtime cell count in sync (initRuntime merges
   // existing values, so this is non-destructive).
   const trigCellCount = timelineTrigCells(widget).length;
+  const cueCellCount  = timelineCueCells(widget).length;
   useEffect(() => {
     const s = useStore.getState();
     const wr = s.runtime.widgets[widget.id];
-    if (!wr || wr.cells.length === widget.tracks.length + trigCellCount) return;
+    if (!wr || wr.cells.length === widget.tracks.length + trigCellCount + cueCellCount) return;
     s.initRuntime(s.project.pages.flatMap((p) => p.widgets));
-  }, [trigCellCount, widget.tracks.length, widget.id]);
+  }, [trigCellCount, cueCellCount, widget.tracks.length, widget.id]);
+
+  // ─── Cue / wait editing ────────────────────────────────────────────────────
+
+  function splitCueAt(trackId: string, time: number) {
+    const t = widgetRef.current.tracks.find((x) => x.id === trackId);
+    if (!t || t.kind !== 'cue') return;
+    const ct = t as CueTrack;
+    const at = Math.max(0, Math.min(1, snapTime(time)));
+    // Refuse a cut that lands on an existing boundary — it would make an empty
+    // block that can never be reached.
+    if (ct.cues.some((c) => Math.abs(c.time - at) < 0.001) || at <= 0.001) return;
+    const region: CueRegion = {
+      id: nanoid(), time: at,
+      name: `Cue ${ct.cues.length + 1}`,
+      color: CUE_COLORS[ct.cues.length % CUE_COLORS.length],
+      mapping: null,
+    };
+    const cues = [...ct.cues, region].sort((a, b) => a.time - b.time);
+    updateTrack(trackId, { cues } as never);
+    setSelKfId(region.id);
+  }
+
+  function patchCue(trackId: string, regionId: string, patch: Partial<CueRegion>) {
+    const t = widgetRef.current.tracks.find((x) => x.id === trackId);
+    if (!t || t.kind !== 'cue') return;
+    const cues = (t as CueTrack).cues
+      .map((c) => (c.id === regionId ? { ...c, ...patch } : c))
+      .sort((a, b) => a.time - b.time);
+    updateTrack(trackId, { cues } as never);
+  }
+
+  function deleteCue(trackId: string, regionId: string) {
+    const t = widgetRef.current.tracks.find((x) => x.id === trackId);
+    if (!t || t.kind !== 'cue') return;
+    const ct = t as CueTrack;
+    // The opening block owns time 0 — removing it would leave a gap.
+    if (ct.cues.length <= 1 || ct.cues[0].id === regionId) return;
+    updateTrack(trackId, { cues: ct.cues.filter((c) => c.id !== regionId) } as never);
+    if (selKfId === regionId) setSelKfId(null);
+  }
+
+  function addWaitAt(trackId: string, time: number) {
+    const t = widgetRef.current.tracks.find((x) => x.id === trackId);
+    if (!t || t.kind !== 'wait') return;
+    const p: WaitPoint = { id: nanoid(), time: Math.max(0, Math.min(1, snapTime(time))) };
+    const points = [...(t as WaitTrack).points, p].sort((a, b) => a.time - b.time);
+    updateTrack(trackId, { points } as never);
+    setSelKfId(p.id);
+  }
+
+  function patchWait(trackId: string, pointId: string, patch: Partial<WaitPoint>) {
+    const t = widgetRef.current.tracks.find((x) => x.id === trackId);
+    if (!t || t.kind !== 'wait') return;
+    const points = (t as WaitTrack).points
+      .map((p) => (p.id === pointId ? { ...p, ...patch } : p))
+      .sort((a, b) => a.time - b.time);
+    updateTrack(trackId, { points } as never);
+  }
+
+  function deleteWait(trackId: string, pointId: string) {
+    const t = widgetRef.current.tracks.find((x) => x.id === trackId);
+    if (!t || t.kind !== 'wait') return;
+    updateTrack(trackId, { points: (t as WaitTrack).points.filter((p) => p.id !== pointId) } as never);
+    if (selKfId === pointId) setSelKfId(null);
+  }
 
   // ─── Ruler markers + snap ──────────────────────────────────────────────────
 
@@ -1203,6 +1551,9 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
     saveMarkers([...markers, m]);
     setSelMarkerId(m.id);
   }
+  // The key handler is bound once, so it reaches the current closure via a ref.
+  const addMarkerRef = useRef(addMarkerAt);
+  addMarkerRef.current = addMarkerAt;
   function moveMarker(id: string, time: number) {
     saveMarkers(markers.map((m) => m.id === id ? { ...m, time: Math.max(0, Math.min(1, time)) } : m));
   }
@@ -1392,15 +1743,59 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
 
   // ─── Ruler ticks ───────────────────────────────────────────────────────────
 
+  // Ticks follow the ZOOM, not just the duration: the step is picked so labels
+  // stay ~64px apart whatever the scale, and minor ticks appear between them as
+  // soon as there is room. Zooming in therefore reveals detail instead of
+  // stretching the same handful of marks.
+  // The ruler grid for the current zoom: `step` is the labelled interval,
+  // `minor` the finest tick drawn. Shift+arrows nudge the playhead by `minor`,
+  // so a keyboard step always matches what you can see.
+  function rulerGrid(): { step: number; minor: number } {
+    const d   = Math.max(widget.duration, 0.001);
+    const fps = widget.timecodeFrameRate ?? project.frameRate ?? 25;
+    const unit = widget.rulerUnit ?? 'sec';
+    const pxPerSec = totalW / d;
+
+    const LADDER = unit === 'frames'
+      ? [1 / fps, 2 / fps, 5 / fps, 10 / fps, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
+      : [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+    const MIN_LABEL_PX = 64;
+    let step = LADDER[LADDER.length - 1];
+    for (const s of LADDER) { if (s * pxPerSec >= MIN_LABEL_PX) { step = s; break; } }
+
+    // Subdivide only while the minor ticks stay readable.
+    const subDiv = (step * pxPerSec) / 4 >= 7 ? 4 : (step * pxPerSec) / 2 >= 7 ? 2 : 1;
+    return { step, minor: step / subDiv };
+  }
+
+  const gridRef = useRef(rulerGrid);
+  gridRef.current = rulerGrid;
+
   function rulerTicks() {
-    const d    = widget.duration;
-    const step = d <= 10 ? 1 : d <= 30 ? 5 : d <= 60 ? 10 : d <= 120 ? 15 : 30;
+    const d   = Math.max(widget.duration, 0.001);
+    const fps = widget.timecodeFrameRate ?? project.frameRate ?? 25;
+    const unit = widget.rulerUnit ?? 'sec';
+    const { step, minor } = rulerGrid();
+
     const ticks: React.ReactNode[] = [];
-    for (let t = 0; t <= d; t += step) {
+    const count = Math.floor(d / minor);
+    for (let i = 0; i <= count; i++) {
+      const t = i * minor;
+      const isMajor = Math.abs(t / step - Math.round(t / step)) < 1e-6;
       ticks.push(
-        <div key={t} style={{ position: 'absolute', left: `${(t / d) * 100}%`, top: 0, pointerEvents: 'none', transform: 'translateX(-50%)' }}>
-          <div style={{ width: 1, height: 5, background: '#2a2a2a', margin: '0 auto' }} />
-          <div style={{ fontSize: 8, color: '#383838', marginTop: 1, whiteSpace: 'nowrap' }}>{fmt(t)}</div>
+        <div key={i} style={{
+          position: 'absolute', left: `${(t / d) * 100}%`, top: 0,
+          pointerEvents: 'none', transform: 'translateX(-50%)',
+        }}>
+          <div style={{
+            width: 1, height: isMajor ? 9 : 4,
+            background: isMajor ? '#6a6a6a' : '#3a3a3a', margin: '0 auto',
+          }} />
+          {isMajor && (
+            <div style={{ fontSize: 10, color: '#a8a8a8', marginTop: 2, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+              {fmtRuler(t, unit, fps, step)}
+            </div>
+          )}
         </div>
       );
     }
@@ -1435,9 +1830,9 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
           </div>
           <div style={rSec}>
             <div style={rLbl}>Time (s)</div>
-            <input type="number" style={rInp} min={0} max={widget.duration} step={0.01}
-              value={(selMarker.time * widget.duration).toFixed(2)}
-              onChange={(e) => moveMarker(selMarker.id, (+e.target.value) / widget.duration)} />
+            <NumberInput style={rInp} min={0} max={widget.duration} step={0.01}
+              value={+(selMarker.time * widget.duration).toFixed(2)}
+              onChange={(v) => moveMarker(selMarker.id, v / widget.duration)} />
           </div>
           <div style={{ fontSize: 9, color: '#444', marginBottom: 8, lineHeight: 1.4 }}>
             Draws a line across every track. Triggers and value points snap to it while SNAP is on.
@@ -1448,6 +1843,93 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
           </button>
         </>
       );
+    }
+    if (selTrack?.kind === 'cue') {
+      const region = (selTrack as CueTrack).cues.find((c) => c.id === selKfId);
+      if (region) {
+        const isFirst = (selTrack as CueTrack).cues[0].id === region.id;
+        return (
+          <>
+            <div style={{ fontSize: 9, fontWeight: 600, color: '#555', marginBottom: 8, letterSpacing: '0.06em' }}>CUE BLOCK</div>
+            <div style={rSec}>
+              <div style={rLbl}>Name</div>
+              <input style={rInp} value={region.name}
+                onChange={(e) => patchCue(selTrack.id, region.id, { name: e.target.value })}
+                placeholder="Cue name…" />
+            </div>
+            <div style={rSec}>
+              <div style={rLbl}>Colour</div>
+              <input type="color" value={region.color}
+                onChange={(e) => patchCue(selTrack.id, region.id, { color: e.target.value })}
+                style={{ width: '100%', height: 22, background: 'none', border: '1px solid #1e1e1e', borderRadius: 2, cursor: 'pointer', padding: 0 }} />
+            </div>
+            <div style={rSec}>
+              <div style={rLbl}>Starts at (s)</div>
+              <NumberInput style={rInp} min={0} max={widget.duration} step={0.01}                 disabled={isFirst}
+              value={+(region.time * widget.duration).toFixed(2)}
+              onChange={(v) => patchCue(selTrack.id, region.id, { time: Math.max(0, Math.min(1, v / widget.duration)) })} />
+              {isFirst && <div style={{ fontSize: 9, color: '#444', marginTop: 2 }}>The opening block always starts at 0.</div>}
+            </div>
+            <MiniMap label="Output mapping" mapping={region.mapping}
+              onChange={(m) => patchCue(selTrack.id, region.id, { mapping: m })} />
+            <div style={{ fontSize: 9, color: '#444', marginBottom: 8, lineHeight: 1.4 }}>
+              Held at 1 while the playhead is anywhere inside this block — including
+              when you scrub into it. Double-click or Ctrl-click the row to cut a new block.
+            </div>
+            {!isFirst && (
+              <button onClick={() => deleteCue(selTrack.id, region.id)}
+                style={{ width: '100%', background: '#1a0a0a', border: '1px solid #3a1a1a', color: '#c44', borderRadius: 2, padding: '4px', cursor: 'pointer', fontSize: 10 }}>
+                Delete block
+              </button>
+            )}
+          </>
+        );
+      }
+    }
+    if (selTrack?.kind === 'wait') {
+      const point = (selTrack as WaitTrack).points.find((p) => p.id === selKfId);
+      if (point) {
+        return (
+          <>
+            <div style={{ fontSize: 9, fontWeight: 600, color: '#555', marginBottom: 8, letterSpacing: '0.06em' }}>WAIT POINT</div>
+            <div style={rSec}>
+              <div style={rLbl}>Name</div>
+              <input style={rInp} value={point.name ?? ''}
+                onChange={(e) => patchWait(selTrack.id, point.id, { name: e.target.value || undefined })}
+                placeholder="e.g. wait for actor…" />
+            </div>
+            <div style={rSec}>
+              <div style={rLbl}>Time (s)</div>
+              <NumberInput style={rInp} min={0} max={widget.duration} step={0.01}
+              value={+(point.time * widget.duration).toFixed(2)}
+              onChange={(v) => patchWait(selTrack.id, point.id, { time: Math.max(0, Math.min(1, v / widget.duration)) })} />
+            </div>
+            <div style={rSec}>
+              <div style={rLbl}>Bypass</div>
+              <button
+                onClick={() => patchWait(selTrack.id, point.id, { bypass: !point.bypass })}
+                style={{
+                  width: '100%', borderRadius: 2, padding: '4px', cursor: 'pointer', fontSize: 10,
+                  background: point.bypass ? '#2a2a2a' : '#111',
+                  border: `1px solid ${point.bypass ? '#666' : '#1e1e1e'}`,
+                  color: point.bypass ? '#bbb' : '#666', fontFamily: 'inherit',
+                }}>
+                {point.bypass ? 'BYPASSED — does not stop' : 'Active — stops playback'}
+              </button>
+            </div>
+            <div style={{ fontSize: 9, color: '#444', marginBottom: 8, lineHeight: 1.4 }}>
+              Playback stops on this point. SPACE (or ▶) carries on from here.
+              Click the row to add another point.
+              Bypassed points go grey and let the transport run through, but
+              Ctrl+←/→ still jumps to them.
+            </div>
+            <button onClick={() => deleteWait(selTrack.id, point.id)}
+              style={{ width: '100%', background: '#1a0a0a', border: '1px solid #3a1a1a', color: '#c44', borderRadius: 2, padding: '4px', cursor: 'pointer', fontSize: 10 }}>
+              Delete wait point
+            </button>
+          </>
+        );
+      }
     }
     if (selTrigMk && selTrack?.kind === 'trig') {
       return (
@@ -1461,9 +1943,9 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
           </div>
           <div style={rSec}>
             <div style={rLbl}>Time (s)</div>
-            <input type="number" style={rInp} min={0} max={widget.duration} step={0.01}
-              value={(selTrigMk.time * widget.duration).toFixed(2)}
-              onChange={(e) => moveKeyframe(selTrkId!, selTrigMk.id, Math.max(0, Math.min(1, (+e.target.value) / widget.duration)), 0)} />
+            <NumberInput style={rInp} min={0} max={widget.duration} step={0.01}
+              value={+(selTrigMk.time * widget.duration).toFixed(2)}
+              onChange={(v) => moveKeyframe(selTrkId!, selTrigMk.id, Math.max(0, Math.min(1, v / widget.duration)), 0)} />
           </div>
           <MiniMap label="Output mapping" mapping={(selTrack as TrigTrack).mapping}
             onChange={(m) => updateTrack(selTrack.id, { mapping: m } as never)} />
@@ -1481,16 +1963,16 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
           <div style={{ fontSize: 9, fontWeight: 600, color: '#555', marginBottom: 8, letterSpacing: '0.06em' }}>KEYFRAME</div>
           <div style={rSec}>
             <div style={rLbl}>Time (s)</div>
-            <input type="number" style={rInp} min={0} max={widget.duration} step={0.01}
-              value={(selKf.time * widget.duration).toFixed(2)}
-              onChange={(e) => patchKeyframe(selTrkId!, selKf.id, { time: Math.max(0, Math.min(1, (+e.target.value) / widget.duration)) })} />
+            <NumberInput style={rInp} min={0} max={widget.duration} step={0.01}
+              value={+(selKf.time * widget.duration).toFixed(2)}
+              onChange={(v) => patchKeyframe(selTrkId!, selKf.id, { time: Math.max(0, Math.min(1, v / widget.duration)) })} />
           </div>
           {selTrack.kind === 'value' && 'value' in selKf && (
             <div style={rSec}>
               <div style={rLbl}>Value (0–1)</div>
-              <input type="number" style={rInp} min={0} max={1} step={0.01}
-                value={(selKf as ValueKeyframe).value.toFixed(3)}
-                onChange={(e) => patchKeyframe(selTrkId!, selKf.id, { value: Math.max(0, Math.min(1, +e.target.value)) })} />
+              <NumberInput style={rInp} min={0} max={1} step={0.01}
+              value={+(selKf as ValueKeyframe).value.toFixed(3)}
+              onChange={(v) => patchKeyframe(selTrkId!, selKf.id, { value: Math.max(0, Math.min(1, v)) })} />
             </div>
           )}
           {selTrack.kind === 'color' && 'color' in selKf && (
@@ -1743,6 +2225,20 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
             color: snapEnabled ? '#fff' : '#3a3a3a',
             fontFamily: 'inherit', lineHeight: 1.4,
           }}>SNAP</button>
+
+        {/* Ruler readout: seconds or timecode frames */}
+        <button
+          onClick={() => patchWidget({ rulerUnit: (widget.rulerUnit ?? 'sec') === 'sec' ? 'frames' : 'sec' })}
+          title={(widget.rulerUnit ?? 'sec') === 'sec'
+            ? 'Ruler in seconds — click for frames'
+            : `Ruler in frames @ ${widget.timecodeFrameRate ?? project.frameRate ?? 25}fps — click for seconds`}
+          style={{
+            background: '#111', border: '1px solid #1e1e1e',
+            borderRadius: 2, fontSize: 10, padding: '2px 7px', cursor: 'pointer',
+            color: '#9a9a9a', fontFamily: 'inherit', lineHeight: 1.4, marginLeft: 4,
+          }}>
+          {(widget.rulerUnit ?? 'sec') === 'sec' ? 'SEC' : 'FRM'}
+        </button>
       </div>
 
       {/* ── Body ── */}
@@ -1758,10 +2254,10 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
             </button>
             {showAddMenu && (
               <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 20, background: '#0f0f0f', border: '1px solid #1e1e1e', borderRadius: 3, width: LEFT_W - 4, overflow: 'hidden' }}>
-                {(['value', 'color', 'trig', 'sound'] as const).map((kind) => (
+                {(['value', 'color', 'trig', 'cue', 'wait', 'sound'] as const).map((kind) => (
                   <button key={kind} onClick={() => addTrack(kind)}
                     style={{ display: 'block', width: '100%', background: 'none', border: 'none', color: '#888', padding: '6px 10px', cursor: 'pointer', textAlign: 'left', fontSize: 11 }}>
-                    {kind === 'value' ? '◆ Value track' : kind === 'color' ? '● Color track' : kind === 'trig' ? '▲ Trig track' : '♪ Sound track'}
+                    {TRACK_ICON[kind]} {TRACK_KIND_LABEL[kind]}
                   </button>
                 ))}
               </div>
@@ -1780,8 +2276,8 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
                     background: selTrkId === t.id ? '#101820' : 'transparent',
                   }}
                   onClick={() => { setSelTrkId(t.id); setSelKfId(null); }}>
-                  <span style={{ fontSize: 10, color: t.kind === 'value' ? (t as ValueTrack).color : t.kind === 'color' ? '#c8a040' : t.kind === 'trig' ? (t as TrigTrack).color : '#4a9f6a', flexShrink: 0, opacity: t.muted ? 0.35 : 1 }}>
-                    {t.kind === 'value' ? '◆' : t.kind === 'color' ? '●' : t.kind === 'trig' ? '▲' : '♪'}
+                  <span style={{ fontSize: 10, color: trackColor(t), flexShrink: 0, opacity: t.muted ? 0.35 : 1 }}>
+                    {TRACK_ICON[t.kind] ?? '◆'}
                   </span>
                   <span style={{ fontSize: 10, color: '#666', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', flex: 1, opacity: t.muted ? 0.4 : 1 }}>{t.label}</span>
                   <button
@@ -1898,7 +2394,16 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
               >
                 {rulerTicks()}
 
-                {/* Ruler markers — grey droplets; drag to move, click to select */}
+                <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${tNorm * 100}%`, width: 1, background: '#e06020', pointerEvents: 'none' }} />
+              </div>
+
+
+              {/* Marker lane — its own thin strip, so marker names never sit on
+                  top of the ruler numbers. */}
+              <div style={{
+                flexShrink: 0, height: MARKER_H, position: 'relative',
+                background: '#0b0b0b', borderBottom: '1px solid #141414',
+              }}>
                 {markers.map((m) => {
                   const isSel = selMarkerId === m.id;
                   return (
@@ -1906,13 +2411,12 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
                       key={m.id}
                       title={m.name || 'marker'}
                       style={{
-                        position: 'absolute', left: `${m.time * 100}%`, bottom: 0,
-                        transform: 'translateX(-50%)',
-                        display: 'flex', flexDirection: 'column', alignItems: 'center',
+                        position: 'absolute', left: `${m.time * 100}%`, top: 0, bottom: 0,
+                        display: 'flex', flexDirection: 'row', alignItems: 'center',
                         cursor: 'grab', zIndex: 6, userSelect: 'none',
                       }}
                       onPointerDown={(e) => {
-                        e.stopPropagation();   // don't scrub the playhead
+                        e.stopPropagation();
                         e.currentTarget.setPointerCapture(e.pointerId);
                         setSelMarkerId(m.id);
                         setSelKfId(null);
@@ -1927,24 +2431,24 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
                       onPointerUp={() => { markerDragRef.current = null; }}
                       onPointerCancel={() => { markerDragRef.current = null; }}
                     >
-                      {m.name && (
-                        <span style={{
-                          fontSize: 8, lineHeight: '9px', color: isSel ? '#fff' : '#9a9a9a',
-                          whiteSpace: 'nowrap', pointerEvents: 'none', marginBottom: 1,
-                        }}>{m.name}</span>
-                      )}
-                      {/* Droplet: rounded top, pointed bottom */}
+                      {/* Droplet sits ON the time; the name runs to its right. */}
                       <span style={{
-                        width: 10, height: 11,
+                        width: 9, height: 11, flexShrink: 0,
+                        transform: 'translateX(-50%)',
                         background: isSel ? '#ffffff' : '#8a8a8a',
-                        borderRadius: '3px 3px 3px 3px',
+                        borderRadius: 3,
                         clipPath: 'polygon(0% 0%, 100% 0%, 100% 62%, 50% 100%, 0% 62%)',
                         pointerEvents: 'none',
                       }} />
+                      {m.name && (
+                        <span style={{
+                          fontSize: 9, lineHeight: 1, color: isSel ? '#fff' : '#9a9a9a',
+                          whiteSpace: 'nowrap', pointerEvents: 'none', marginLeft: 1,
+                        }}>{m.name}</span>
+                      )}
                     </div>
                   );
                 })}
-
                 <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${tNorm * 100}%`, width: 1, background: '#e06020', pointerEvents: 'none' }} />
               </div>
 
@@ -1967,6 +2471,8 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
                     onMoveKf={(kfId, time, value) => moveKeyframe(t.id, kfId, time, value)}
                     onPatchKf={(kfId, patch) => patchKeyframe(t.id, kfId, patch)}
                     onCutTrack={(time) => cutTrack(t.id, time)}
+                    onSplitCue={(time) => splitCueAt(t.id, time)}
+                    onAddWait={(time) => addWaitAt(t.id, time)}
                     onUpdateTrack={(patch) => updateTrack(t.id, patch as Partial<TimelineTrack>)}
                   />
                 ))}

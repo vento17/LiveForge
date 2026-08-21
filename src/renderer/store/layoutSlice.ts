@@ -3,13 +3,14 @@ import { nanoid } from 'nanoid';
 import type { StoreState } from './index';
 import type { Project, Page, Widget, Rect, WidgetKind, Connection, OutputProtocol, RouterWidget, RouterRow } from '../../shared/types/project';
 import type { Mapping } from '../../shared/types/mapping';
-import { makeDefaultWidget, nextFreeCc, makeSliderCells, makeButtonCells, makeKnobCells, defaultMidiMapping, defaultOscMapping } from '../widgets/defaults';
+import { makeDefaultWidget, nextFreeCc, makeSliderCells, makeButtonCells, makeKnobCells, defaultMidiMapping, defaultOscMapping, widgetLabelNum } from '../widgets/defaults';
 
 const KIND_LABEL_PREFIX: Partial<Record<WidgetKind, string>> = {
   sliderBank: 'slider', buttonGrid: 'button', knobBank: 'knob', xyPad: 'xy',
   stepSequencer: 'seq', graphWidget: 'graph', cues: 'cues', timeline: 'timeline',
   spoutInput: 'spout', ndiInput: 'ndi', submasters: 'sub', router: 'router',
   imageWidget: 'image', textWidget: 'text', masterLevel: 'master', instance: 'instance',
+  manual: 'manual', keyboard: 'keys',
 };
 
 function nextUniqueLabel(project: Project, kind: WidgetKind): string {
@@ -35,6 +36,7 @@ export interface LayoutSlice {
 
   loadProject: (project: Project) => void;
   setProjectName: (name: string) => void;
+  setProjectFrameRate: (fps: NonNullable<Project['frameRate']>) => void;
   setPageSize: (pageId: string, width: number, height: number) => void;
   setPageLiveOffset: (pageId: string, x: number, y: number) => void;
 
@@ -113,9 +115,23 @@ function maxZIndex(page: Page): number {
   return page.widgets.reduce((max, w) => Math.max(max, w.zIndex), 0);
 }
 
-function defaultCellLabel(kind: string, index: number): string {
+// Cell names carry the widget's own number, so two banks of the same kind are
+// told apart at a glance: slider1 gets S1.1…S1.8 and slider2 gets S2.1…S2.8.
+// Without it every bank numbered its cells from 1 and looked identical on the
+// canvas, while the link menu listed them as separate widgets.
+function defaultCellLabel(kind: string, index: number, widgetLabel?: string): string {
   const prefix: Record<string, string> = { sliderBank: 'S', buttonGrid: 'B', knobBank: 'K' };
-  return `${prefix[kind] ?? ''}${index + 1}`;
+  const num = widgetLabel?.match(/(\d+)$/)?.[1];
+  return `${prefix[kind] ?? ''}${num ? `${num}.` : ''}${index + 1}`;
+}
+
+// Rewrites the default cell names of a cell bank to match its current label.
+// Only touches slider/button/knob banks — the other kinds have no cell labels.
+function applyDefaultCellLabels(widget: Widget): void {
+  if (!('cells' in widget)) return;
+  (widget.cells as { label: string }[]).forEach((c, i) => {
+    c.label = defaultCellLabel(widget.kind, i, widget.label);
+  });
 }
 
 // Reassign a copied widget's output "message values" to a free block so a copy
@@ -133,6 +149,12 @@ function reassignOutputs(widget: Widget, base: number): void {
   const w = widget as { kind: string; cells?: { mapping: Mapping }[]; mapping?: Mapping; mappingX?: Mapping; mappingY?: Mapping };
   if (w.kind === 'xyPad') { w.mappingX = bump(w.mappingX ?? null); w.mappingY = bump(w.mappingY ?? null); return; }
   if (Array.isArray(w.cells)) { w.cells = w.cells.map((c) => ({ ...c, mapping: bump(c.mapping) })); return; }
+  // Keyboard keys are cells too, they just live under a different name.
+  const kb = widget as { kind: string; keys?: { mapping: Mapping }[] };
+  if (kb.kind === 'keyboard' && Array.isArray(kb.keys)) {
+    kb.keys = kb.keys.map((k) => ({ ...k, mapping: bump(k.mapping) }));
+    return;
+  }
   if ('mapping' in w && w.mapping !== undefined) { w.mapping = bump(w.mapping); }
 }
 
@@ -164,12 +186,6 @@ function remapWidgetRefs(widget: Widget, idMap: Record<string, string>): void {
   }
 }
 
-function widgetRankByKind(page: Page, widgetId: string): number {
-  const widget = getWidget(page, widgetId);
-  if (!widget) return 0;
-  return page.widgets.filter((w) => w.kind === widget.kind && w.id <= widgetId).length - 1;
-}
-
 export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', never]], [], LayoutSlice> = (set) => ({
   project: makeDefaultProject(),
   projectHistory: [],
@@ -184,6 +200,11 @@ export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', neve
 
   setProjectName: (name) => set((s) => {
     s.project.name = name;
+    touchUpdatedAt(s.project);
+  }),
+
+  setProjectFrameRate: (fps) => set((s) => {
+    s.project.frameRate = fps;
     touchUpdatedAt(s.project);
   }),
 
@@ -251,6 +272,7 @@ export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', neve
       const baseCC = nextFreeCc(page.widgets);
       const widget = makeDefaultWidget(id, kind, maxZIndex(page) + 1, baseCC);
       widget.label = nextUniqueLabel(s.project, kind);
+      applyDefaultCellLabels(widget as Widget);
       page.widgets.push(widget as Widget);
       s.selectedWidgetId = id;
       touchUpdatedAt(s.project);
@@ -302,12 +324,12 @@ export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', neve
     if (!widget || !('cells' in widget)) return;   // narrows to the cell banks (slider/button/knob)
     widget.outputProtocol = protocol;
     const baseCC = nextFreeCc(page.widgets.filter((w) => w.id !== widgetId));
-    const rank = widgetRankByKind(page, widgetId);
+    const num = widgetLabelNum(widget.label);
     (widget.cells as { mapping: unknown }[]).forEach((cell, i) => {
       if (protocol === 'midi') {
         cell.mapping = defaultMidiMapping(i, baseCC);
       } else if (protocol === 'osc') {
-        cell.mapping = defaultOscMapping(widget.kind, rank, i);
+        cell.mapping = defaultOscMapping(widget.kind, num, i);
       } else if (protocol === 'enttec') {
         cell.mapping = { type: 'enttec', channel: (baseCC + i) % 512 + 1, minValue: 0, maxValue: 255 };
       } else if (protocol === 'artnet') {
@@ -366,12 +388,12 @@ export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', neve
     if (!widget || !('cells' in widget)) return;   // narrows to the cell banks (slider/button/knob)
     const proto = widget.outputProtocol;
     const baseCC = nextFreeCc(page.widgets.filter((w) => w.id !== widgetId));
-    const rank = widgetRankByKind(page, widgetId);
+    const num = widgetLabelNum(widget.label);
     (widget.cells as { mapping: unknown }[]).forEach((cell, i) => {
       if (proto === 'midi') {
         cell.mapping = defaultMidiMapping(i, baseCC);
       } else if (proto === 'osc') {
-        cell.mapping = defaultOscMapping(widget.kind, rank, i);
+        cell.mapping = defaultOscMapping(widget.kind, num, i);
       } else if (proto === 'enttec') {
         cell.mapping = { type: 'enttec', channel: (baseCC + i) % 512 + 1, minValue: 0, maxValue: 255 };
       } else if (proto === 'artnet') {
@@ -388,9 +410,7 @@ export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', neve
     if (!page) return;
     const widget = getWidget(page, widgetId);
     if (!widget || !('cells' in widget)) return;   // narrows to the cell banks (slider/button/knob)
-    (widget.cells as { label: string }[]).forEach((c, i) => {
-      c.label = defaultCellLabel(widget.kind, i);
-    });
+    applyDefaultCellLabels(widget);
     touchUpdatedAt(s.project);
   }),
 
@@ -441,16 +461,16 @@ export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', neve
     touchUpdatedAt(s.project);
   }),
 
-  // Restore a saved link/routing state (used by Cues). For each router still
-  // present, its rows are replaced with the deep-cloned saved rows. Routers not
-  // in the snapshot are left untouched. Not history-tracked (live recall).
+  // Restore a saved link/routing state (used by Cues). EVERY router is set to the
+  // cue's saved rows, or emptied if it wasn't in the snapshot — so returning to an
+  // older cue removes links (and their routers' rows) created after it. Full scene
+  // recall. Not history-tracked (live recall).
   applyLinksSnapshot: (links) => set((s) => {
     for (const page of s.project.pages) {
       for (const w of page.widgets) {
         if (w.kind !== 'router') continue;
         const saved = links[w.id];
-        if (!saved) continue;
-        (w as RouterWidget).rows = JSON.parse(JSON.stringify(saved)) as RouterRow[];
+        (w as RouterWidget).rows = saved ? (JSON.parse(JSON.stringify(saved)) as RouterRow[]) : [];
       }
     }
     touchUpdatedAt(s.project);
@@ -546,7 +566,25 @@ export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', neve
       for (const c of clones) {
         c.rect = { ...c.rect, x: c.rect.x + 24, y: c.rect.y + 24 };
         c.zIndex = ++z;
+        const oldLabel = c.label;
         c.label = nextUniqueLabel(s.project, c.kind);
+        // Renumber only the cells still carrying their default name or default
+        // OSC address — anything you typed yourself survives the copy.
+        if ('cells' in c) {
+          const oldNum = widgetLabelNum(oldLabel);
+          const newNum = widgetLabelNum(c.label);
+          (c.cells as { label: string; mapping: Mapping }[]).forEach((cell, i) => {
+            if (cell.label === defaultCellLabel(c.kind, i, oldLabel)) {
+              cell.label = defaultCellLabel(c.kind, i, c.label);
+            }
+            // reassignOutputs bumps MIDI/DMX numbers but leaves OSC alone, so
+            // without this a copy kept pointing at the original's addresses.
+            if (cell.mapping?.type === 'osc'
+                && cell.mapping.address === defaultOscMapping(c.kind, oldNum, i).address) {
+              cell.mapping = { ...cell.mapping, address: defaultOscMapping(c.kind, newNum, i).address };
+            }
+          });
+        }
         reassignOutputs(c, nextFreeCc(page.widgets));
         remapWidgetRefs(c, idMap);
         page.widgets.push(c);

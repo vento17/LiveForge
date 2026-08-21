@@ -1,6 +1,7 @@
 import React from 'react';
 import type { OutputProtocol } from '../../../shared/types/project';
 import { useStore, useActivePage } from '../../store';
+import NumberInput from './NumberInput';
 
 interface Props {
   widgetId: string;
@@ -47,6 +48,42 @@ function CellEditModalInner({ widgetId, pageId, onClose }: Props): React.JSX.Ele
 
   const proto = widget.outputProtocol;
 
+  // Tab walks DOWN a column instead of across a row. You fill in every name,
+  // then every address — the browser default (row by row) forces you to skip
+  // past colour and mapping fields between each name.
+  function handleTab(e: React.KeyboardEvent<HTMLDivElement>): void {
+    if (e.key !== 'Tab') return;
+    const rows = Array.from(e.currentTarget.querySelectorAll('tbody tr'));
+    if (rows.length === 0) return;
+    const fieldsOf = (tr: Element): HTMLElement[] =>
+      Array.from(tr.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select'))
+        .filter((el) => !el.disabled);
+
+    const active = document.activeElement as HTMLElement | null;
+    let row = -1, col = -1;
+    rows.forEach((tr, ri) => {
+      const at = fieldsOf(tr).indexOf(active as HTMLElement);
+      if (at >= 0) { row = ri; col = at; }
+    });
+    if (row === -1) return;   // focus is outside the table — leave Tab alone
+
+    e.preventDefault();
+    const colCount = fieldsOf(rows[0]).length;
+    let nRow = row + (e.shiftKey ? -1 : 1);
+    let nCol = col;
+    // Past the last row, carry on at the top of the next column.
+    if (nRow >= rows.length) { nRow = 0; nCol = (col + 1) % colCount; }
+    if (nRow < 0) { nRow = rows.length - 1; nCol = (col - 1 + colCount) % colCount; }
+
+    const target = fieldsOf(rows[nRow])[nCol];
+    if (!target) return;
+    target.focus();
+    // Pre-select text so the next keystroke overwrites — colour pickers cannot
+    // be selected and throw if asked.
+    const asInput = target as HTMLInputElement;
+    if (asInput.select && (asInput.type === 'text' || asInput.type === 'number')) asInput.select();
+  }
+
   return (
     <div
       style={styles.overlay}
@@ -54,7 +91,7 @@ function CellEditModalInner({ widgetId, pageId, onClose }: Props): React.JSX.Ele
       // Stop ALL keyboard events from reaching the canvas (fixes backspace-deletes-widget)
       onKeyDown={(e) => e.stopPropagation()}
     >
-      <div style={styles.panel} onClick={(e) => e.stopPropagation()}>
+      <div style={styles.panel} onClick={(e) => e.stopPropagation()} onKeyDown={handleTab}>
         <div style={styles.header}>
           <span style={{ fontWeight: 600, color: 'var(--color-accent)' }}>
             {widget.label} — Edit cells
@@ -143,9 +180,9 @@ function CellRow({ index, cell, proto, isButton, onChange }: {
       {proto === 'midi' && (
         <>
           <Td>
-            <input style={{ ...inp, width: 36 }} type="number" min={1} max={16}
+            <NumberInput style={{ ...inp, width: 36 }} min={1} max={16}
               value={midi?.channel ?? 1}
-              onChange={(e) => onChange({ mapping: { ...midi, type: 'midi', channel: Number(e.target.value) } })} />
+              onChange={(v) => onChange({ mapping: { ...midi, type: 'midi', channel: v } })} />
           </Td>
           <Td>
             <select style={{ ...inp, width: 84 }}
@@ -159,9 +196,9 @@ function CellRow({ index, cell, proto, isButton, onChange }: {
             </select>
           </Td>
           <Td>
-            <input style={{ ...inp, width: 44 }} type="number" min={0} max={127}
+            <NumberInput style={{ ...inp, width: 44 }} min={0} max={127}
               value={midi?.number ?? index}
-              onChange={(e) => onChange({ mapping: { ...midi, type: 'midi', number: Number(e.target.value) } })} />
+              onChange={(v) => onChange({ mapping: { ...midi, type: 'midi', number: v } })} />
           </Td>
         </>
       )}
@@ -177,14 +214,14 @@ function CellRow({ index, cell, proto, isButton, onChange }: {
       {proto === 'artnet' && (
         <>
           <Td>
-            <input style={{ ...inp, width: 56 }} type="number" min={0} max={32767}
+            <NumberInput style={{ ...inp, width: 56 }} min={0} max={32767}
               value={an?.universe ?? 0}
-              onChange={(e) => onChange({ mapping: { ...an, type: 'artnet', universe: Number(e.target.value) } })} />
+              onChange={(v) => onChange({ mapping: { ...an, type: 'artnet', universe: v } })} />
           </Td>
           <Td>
-            <input style={{ ...inp, width: 48 }} type="number" min={1} max={512}
+            <NumberInput style={{ ...inp, width: 48 }} min={1} max={512}
               value={an?.channel ?? index + 1}
-              onChange={(e) => onChange({ mapping: { ...an, type: 'artnet', channel: Number(e.target.value) } })} />
+              onChange={(v) => onChange({ mapping: { ...an, type: 'artnet', channel: v } })} />
           </Td>
         </>
       )}
@@ -192,19 +229,19 @@ function CellRow({ index, cell, proto, isButton, onChange }: {
       {proto === 'sacn' && (
         <>
           <Td>
-            <input style={{ ...inp, width: 60 }} type="number" min={1} max={63999}
+            <NumberInput style={{ ...inp, width: 60 }} min={1} max={63999}
               value={sacn?.universe ?? 1}
-              onChange={(e) => onChange({ mapping: { ...sacn, type: 'sacn', channel: sacn?.channel ?? index + 1, minValue: 0, maxValue: 255, priority: sacn?.priority ?? 100, universe: Number(e.target.value) } })} />
+              onChange={(v) => onChange({ mapping: { ...sacn, type: 'sacn', channel: sacn?.channel ?? index + 1, minValue: 0, maxValue: 255, priority: sacn?.priority ?? 100, universe: v } })} />
           </Td>
           <Td>
-            <input style={{ ...inp, width: 48 }} type="number" min={1} max={512}
+            <NumberInput style={{ ...inp, width: 48 }} min={1} max={512}
               value={sacn?.channel ?? index + 1}
-              onChange={(e) => onChange({ mapping: { ...sacn, type: 'sacn', universe: sacn?.universe ?? 1, minValue: 0, maxValue: 255, priority: sacn?.priority ?? 100, channel: Number(e.target.value) } })} />
+              onChange={(v) => onChange({ mapping: { ...sacn, type: 'sacn', universe: sacn?.universe ?? 1, minValue: 0, maxValue: 255, priority: sacn?.priority ?? 100, channel: v } })} />
           </Td>
           <Td>
-            <input style={{ ...inp, width: 44 }} type="number" min={1} max={200}
+            <NumberInput style={{ ...inp, width: 44 }} min={1} max={200}
               value={sacn?.priority ?? 100}
-              onChange={(e) => onChange({ mapping: { ...sacn, type: 'sacn', universe: sacn?.universe ?? 1, channel: sacn?.channel ?? index + 1, minValue: 0, maxValue: 255, priority: Number(e.target.value) } })} />
+              onChange={(v) => onChange({ mapping: { ...sacn, type: 'sacn', universe: sacn?.universe ?? 1, channel: sacn?.channel ?? index + 1, minValue: 0, maxValue: 255, priority: v } })} />
           </Td>
         </>
       )}
@@ -215,20 +252,21 @@ function CellRow({ index, cell, proto, isButton, onChange }: {
             <select style={{ ...inp, width: 84 }}
               value={cell.behavior ?? 'momentary'}
               onChange={(e) => onChange({ behavior: e.target.value })}>
+              <option value="momentary">Momentary</option>
               <option value="pulse">Pulse</option>
               <option value="toggle">Toggle</option>
               <option value="radio">Radio</option>
             </select>
           </Td>
           <Td>
-            <input style={{ ...inp, width: 40 }} type="number" min={0} max={127}
+            <NumberInput style={{ ...inp, width: 40 }} min={0} max={127}
               value={cell.onValue ?? 127}
-              onChange={(e) => onChange({ onValue: Number(e.target.value) })} />
+              onChange={(v) => onChange({ onValue: v })} />
           </Td>
           <Td>
-            <input style={{ ...inp, width: 40 }} type="number" min={0} max={127}
+            <NumberInput style={{ ...inp, width: 40 }} min={0} max={127}
               value={cell.offValue ?? 0}
-              onChange={(e) => onChange({ offValue: Number(e.target.value) })} />
+              onChange={(v) => onChange({ offValue: v })} />
           </Td>
         </>
       )}

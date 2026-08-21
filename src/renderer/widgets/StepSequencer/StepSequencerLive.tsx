@@ -48,6 +48,8 @@ export default function StepSequencerLive({ widget }: { widget: StepSequencerWid
   const rafRef       = useRef(0);
   const accBeatsRef  = useRef(0);
   const lastNowRef   = useRef(0);
+  const outRef       = useRef(0);   // smoothed output value
+  const lastSentRef  = useRef(-1);  // last value dispatched (to avoid spamming)
 
   const widgetRef         = useRef(widget);
   const activePageIdRef   = useRef(activePageId);
@@ -84,11 +86,27 @@ export default function StepSequencerLive({ widget }: { widget: StepSequencerWid
       if (step !== currentStepRef.current) {
         currentStepRef.current = step;
         setCurrentStep(step);
-        const s = w.steps[step];
-        const val = s?.active ? s.value : 0;
-        if (w.mapping) dispatchValue(w.mapping, val);
-        // Update runtime cell so Router can use sequencer as source
-        useStore.getState().setCellValue(w.id, 0, val);
+      }
+
+      // Target = the current step's value; slew the output toward it. With
+      // smooth = 0 the output snaps (dispatched only on change); with smooth > 0
+      // it ramps every frame (exponential slew, up to ~0.6 s time constant).
+      const s = w.steps[step];
+      const target = s?.active ? s.value : 0;
+      const smooth = w.smooth ?? 0;
+      if (smooth <= 0) {
+        outRef.current = target;
+      } else {
+        const dtS = Math.min(dt, 100) / 1000;
+        const k = 1 - Math.exp(-dtS / (smooth * 0.6));
+        outRef.current += (target - outRef.current) * k;
+      }
+
+      const out = outRef.current;
+      if (Math.abs(out - lastSentRef.current) > 0.0005) {
+        lastSentRef.current = out;
+        if (w.mapping) dispatchValue(w.mapping, out);
+        useStore.getState().setCellValue(w.id, 0, out);   // so Router can use it as source
       }
 
       rafRef.current = requestAnimationFrame(tick);
@@ -257,6 +275,22 @@ export default function StepSequencerLive({ widget }: { widget: StepSequencerWid
             onPointerDown={(e) => { e.preventDefault(); action(); }}
           >{label}</button>
         ))}
+
+        {/* Smooth (slew) on the output — between ZERO and the speeds */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 6, flexShrink: 0 }}
+          title="Output smoothing (slew)">
+          <span style={{ fontSize: 8, letterSpacing: 1, color: dim }}>SMTH</span>
+          <input
+            type="range" min={0} max={1} step={0.01}
+            value={widget.smooth ?? 0}
+            onPointerDown={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              if (activePageIdRef.current)
+                updateWidgetRef.current(activePageIdRef.current, widgetRef.current.id, { smooth: parseFloat(e.target.value) } as never);
+            }}
+            style={{ width: 60, cursor: 'pointer', accentColor: color }}
+          />
+        </div>
 
         <div style={{ flex: 1 }} />
 

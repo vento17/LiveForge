@@ -11,7 +11,7 @@ import type {
   AutoBpmWidget,
   AudioAnalyserWidget, SoundPlayerWidget,
   LfoWidget, MathWidget, ValueDisplayWidget,
-  MasterLevelWidget, InstanceWidget,
+  MasterLevelWidget, InstanceWidget, ManualWidget, KeyboardWidget,
 } from '../../shared/types/project';
 import { BEAT_DIVISORS } from '../../shared/types/project';
 import type { MidiMapping, OscMapping } from '../../shared/types/mapping';
@@ -24,7 +24,8 @@ import {
   DEFAULT_SPOUT_RECT, DEFAULT_NDI_RECT, DEFAULT_SUBMASTERS_RECT, DEFAULT_ROUTER_RECT,
   DEFAULT_AUTO_BPM_RECT, DEFAULT_AUDIO_ANALYSER_RECT, DEFAULT_SOUND_PLAYER_RECT,
   DEFAULT_LFO_RECT, DEFAULT_MATH_RECT, DEFAULT_VALUE_DISPLAY_RECT,
-  DEFAULT_MASTER_LEVEL_RECT, DEFAULT_INSTANCE_RECT,
+  DEFAULT_MASTER_LEVEL_RECT, DEFAULT_INSTANCE_RECT, DEFAULT_MANUAL_RECT,
+  DEFAULT_KEYBOARD_RECT,
 } from '../../shared/constants';
 
 // ─── Mapping auto-increment helpers ──────────────────────────────────────────
@@ -41,16 +42,25 @@ export function defaultMidiMapping(cellIndex: number, baseIndex: number): MidiMa
   };
 }
 
-const KIND_PREFIX: Record<string, string> = {
-  sliderBank: 'slider', buttonGrid: 'btn', knobBank: 'knob', xyPad: 'xy',
+// OSC addresses get typed by hand into the receiving software, so keep them
+// short: widget letter + widget number / cell number. /s1/1 = slider bank 1,
+// first fader. The widget letter already says what kind of control it is.
+const OSC_WIDGET_LETTER: Record<string, string> = {
+  sliderBank: 's', buttonGrid: 'b', knobBank: 'k', xyPad: 'xy',
 };
 
-// widgetRank = index of this widget among same-kind widgets on the page (0-based)
-export function defaultOscMapping(kind: string, widgetRank: number, cellIndex: number): OscMapping {
-  const prefix = KIND_PREFIX[kind] ?? kind;
+// The number comes from the widget's own unique label (slider3 → 3), not from a
+// positional rank: that keeps the address lined up with the cell names
+// (S3.1 ↔ /s3/1) and makes it follow a copy instead of staying on the original.
+export function widgetLabelNum(label: string): number {
+  return Number(label.match(/(\d+)$/)?.[1] ?? 1);
+}
+
+export function defaultOscMapping(kind: string, widgetNum: number, cellIndex: number): OscMapping {
+  const w = OSC_WIDGET_LETTER[kind] ?? kind;
   return {
     type: 'osc',
-    address: `/${prefix}${widgetRank + 1}/${cellIndex + 1}`,
+    address: `/${w}${widgetNum}/${cellIndex + 1}`,
   };
 }
 
@@ -67,7 +77,9 @@ export function makeSliderCells(count: number, baseIndex: number, label: string)
 export function makeButtonCells(count: number, baseIndex: number, label: string): ButtonCellConfig[] {
   return Array.from({ length: count }, (_, i) => ({
     label: `${label}${i + 1}`,
-    behavior: 'pulse' as const,
+    // Momentary is what a button is expected to do: 1 while held, 0 on release.
+    // Pulse (a short trig) is a deliberate choice, not the default.
+    behavior: 'momentary' as const,
     mapping: defaultMidiMapping(i, baseIndex),
     feedbackRules: [],
     onValue: 127,
@@ -205,6 +217,7 @@ export function makeDefaultWidget(id: string, kind: WidgetKind, zIndex: number, 
         stepCount,
         speedMultiplier: 1,
         steps,
+        smooth: 0,
       } satisfies StepSequencerWidget;
     }
     case 'graphWidget': {
@@ -425,8 +438,10 @@ export function makeDefaultWidget(id: string, kind: WidgetKind, zIndex: number, 
         sourceBWidgetId: '',
         sourceBCellIndex: 0,
         operation: 'add',
-        scale: 1,
-        offset: 0,
+        inMin: 0,
+        inMax: 1,
+        outMin: 0,
+        outMax: 1,
         clampOutput: true,
       } satisfies MathWidget;
     }
@@ -457,6 +472,36 @@ export function makeDefaultWidget(id: string, kind: WidgetKind, zIndex: number, 
         protocol: 'artnet',
         orientation: 'vertical',
       } satisfies MasterLevelWidget;
+    }
+    case 'keyboard': {
+      return {
+        id, zIndex, kind: 'keyboard',
+        label: 'Keyboard',
+        rect: { ...DEFAULT_KEYBOARD_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE, showValue: false },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        // Starts empty: which keys you want is the whole point, so there is no
+        // sensible default set to guess at.
+        keys: [],
+        countX: 4,
+        spacingX: 6,
+        spacingY: 6,
+      } satisfies KeyboardWidget;
+    }
+    case 'manual': {
+      return {
+        id, zIndex, kind: 'manual',
+        label: 'Manual',
+        rect: { ...DEFAULT_MANUAL_RECT },
+        style: { ...DEFAULT_WIDGET_STYLE },
+        outputProtocol: 'midi',
+        mapping: null,
+        feedbackRules: [],
+        openTab: 'project',
+        fontScale: 1,
+      } satisfies ManualWidget;
     }
     case 'instance': {
       return {
@@ -489,6 +534,8 @@ export function nextFreeCc(widgets: Widget[]): number {
     if (w.kind === 'valueDisplay') return acc;
     if (w.kind === 'masterLevel') return acc;
     if (w.kind === 'instance') return acc;
+    if (w.kind === 'manual') return acc;
+    if (w.kind === 'keyboard') return acc + w.keys.length;
     if (w.kind === 'lfoWidget' || w.kind === 'mathWidget') return acc + 1;
     return acc + w.countX * w.countY;
   }, 0);

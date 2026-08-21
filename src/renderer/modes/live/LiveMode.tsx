@@ -6,6 +6,7 @@ import LiveSidebar from './LiveSidebar';
 import RouterEngine from './RouterEngine';
 import MasterEngine from './MasterEngine';
 import { bridge } from '../../ipc/bridge';
+import { artnetConfigOutputs, sacnConfigOutputs, oscConfigOutputs, midiConfigOutputs } from '../../../shared/outputs';
 
 const SIDEBAR_WIDTH = 248;
 
@@ -26,13 +27,20 @@ export default function LiveMode(): React.JSX.Element {
     return () => { bridge.invoke('tr:window:fullscreen', false).catch(() => {}); };
   }, []);
 
-  // Initialize runtime + auto-configure all connections when entering Live mode.
   // Runtime covers EVERY page's widgets (not just the active one) so cross-page
   // router links have their source/slave cells available regardless of which
   // page is shown. initRuntime merges existing values, so re-running is safe.
   useEffect(() => {
     initRuntime(project.pages.flatMap((p) => p.widgets));
+  }, [project.pages, initRuntime]);
 
+  // Connections are opened ONCE per Live session, not per page.
+  //
+  // This effect used to be keyed on the active page id. ArtNetService and
+  // SacnService.configure() both start by closing the UDP socket and clearing
+  // every held universe/channel — so each page change tore the DMX stream down
+  // and threw away all current levels. OSC/MIDI got rebound the same way.
+  useEffect(() => {
     const conns = project.connections;
     const midi   = conns.find((c) => c.type === 'midi');
     const osc    = conns.find((c) => c.type === 'osc');
@@ -40,7 +48,7 @@ export default function LiveMode(): React.JSX.Element {
     const sacn   = conns.find((c) => c.type === 'sacn');
 
     if (midi && midi.type === 'midi' && midi.portName) {
-      bridge.invoke('tr:midi:openPort', { portName: midi.portName, virtual: midi.virtualPort ?? false }).catch(() => {});
+      bridge.invoke('tr:midi:openPort', { portName: midi.portName, virtual: midi.virtualPort ?? false, extraOutputs: midiConfigOutputs(midi) }).catch(() => {});
     }
 
     if (osc && osc.type === 'osc' && osc.targetHost) {
@@ -48,19 +56,20 @@ export default function LiveMode(): React.JSX.Element {
         targetHost: osc.targetHost,
         targetPort: osc.targetPort ?? 8000,
         listenPort: osc.listenPort ?? 9000,
+        outputs: oscConfigOutputs(osc),
+        extraListenPorts: osc.extraListenPorts ?? [],
       }).catch(() => {});
     }
     if (artnet && artnet.type === 'artnet' && artnet.targetHost) {
-      bridge.invoke('tr:artnet:configure', { targetHost: artnet.targetHost }).catch(() => {});
+      bridge.invoke('tr:artnet:configure', { outputs: artnetConfigOutputs(artnet) }).catch(() => {});
     }
     if (sacn && sacn.type === 'sacn') {
       bridge.invoke('tr:sacn:configure', {
-        mode: sacn.mode ?? 'multicast',
         priority: sacn.priority ?? 100,
-        targetHost: sacn.targetHost,
+        outputs:  sacnConfigOutputs(sacn),
       }).catch(() => {});
     }
-  }, [page?.id]);
+  }, [project.connections]);
 
   // Compute scale to fit design canvas into the available space
   const computeScale = useCallback(() => {
@@ -136,9 +145,39 @@ export default function LiveMode(): React.JSX.Element {
       {/* Collapsible sidebar */}
       {liveSidebarOpen && <LiveSidebar />}
 
-      {/* Canvas fills remaining space */}
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-        <LiveCanvas page={page} scale={scale} onSelectWidget={setLiveSelectedWidgetId} />
+      {/* Canvas fills remaining space.
+          EVERY page stays mounted, not just the visible one. A widget only
+          streams while its component is alive, so unmounting hidden pages
+          silently stopped their LFOs, sequencers, timelines and every router
+          source living on them the moment you switched page. Inactive pages are
+          taken out of flow and hidden, but still laid out — visibility:hidden
+          (rather than display:none) keeps element measurements valid for
+          widgets that size themselves off the DOM. */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
+        {project.pages.map((p) => {
+          const isActive = p.id === page.id;
+          // Every page renders through the SAME wrapper element, active or not —
+          // only the style differs. Swapping between two different element
+          // shapes made React tear the subtree down and rebuild it on every page
+          // change, which stopped a running timeline and reset every LFO phase.
+          return (
+            <div
+              key={p.id}
+              aria-hidden={!isActive}
+              style={isActive ? { flexShrink: 0 } : {
+                position: 'absolute', top: 0, left: 0,
+                visibility: 'hidden', pointerEvents: 'none', zIndex: -1,
+              }}
+            >
+              <LiveCanvas
+                page={p}
+                scale={scale}
+                active={isActive}
+                onSelectWidget={isActive ? setLiveSelectedWidgetId : undefined}
+              />
+            </div>
+          );
+        })}
       </div>
 
       {/* Hover info bar — shows the widget/cell under the cursor so per-cell

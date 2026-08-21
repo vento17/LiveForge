@@ -37,20 +37,30 @@ export const createRuntimeSlice: StateCreator<StoreState, [['zustand/immer', nev
   runtime: { widgets: {} },
 
   initRuntime: (widgets) => set((s) => {
+    // Build the new map into a plain object first, copying existing cell VALUES
+    // (not immer draft refs) before reassigning — otherwise reading `prev` after
+    // `s.runtime.widgets = {}` returns stale/empty drafts and silently zeroes
+    // every live value (breaks adding a cue/trigger mid-session).
     const prev = s.runtime.widgets;
-    s.runtime.widgets = {};
+    const next: Record<string, WidgetRuntime> = {};
     for (const widget of widgets) {
-      const existing = prev[widget.id];
       const count = cellCount(widget);
+      const existing = prev[widget.id];
       if (existing) {
-        s.runtime.widgets[widget.id] = {
+        next[widget.id] = {
           widgetId: widget.id,
-          cells: Array.from({ length: count }, (_, i) => existing.cells[i] ?? makeCell()),
+          cells: Array.from({ length: count }, (_, i) => {
+            const c = existing.cells[i];
+            return c
+              ? { value: c.value, active: c.active, feedbackColor: c.feedbackColor, feedbackLabel: c.feedbackLabel }
+              : makeCell();
+          }),
         };
       } else {
-        s.runtime.widgets[widget.id] = makeWidgetRuntime(widget);
+        next[widget.id] = makeWidgetRuntime(widget);
       }
     }
+    s.runtime.widgets = next;
   }),
 
   resetRuntime: () => set((s) => {

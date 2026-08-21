@@ -5,6 +5,7 @@ import { dispatchButton } from '../../ipc/dispatch';
 import { bridge } from '../../ipc/bridge';
 import CellLinkMenu from '../base/CellLinkMenu';
 import { useSlavedCells, SLAVE_OUTLINE } from '../base/useSlavedCells';
+import { BEHAVIOR_BADGE } from './behavior';
 
 function apcVelocityToColor(v: number): string {
   if (v === 1) return '#006600';
@@ -219,6 +220,7 @@ export default function ButtonGridLive({ widget }: { widget: ButtonGridWidget })
                 border: `2px solid ${color}`,
                 outline: isSlave ? SLAVE_OUTLINE : undefined,
                 outlineOffset: isSlave ? -2 : undefined,
+                position: 'relative',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -256,6 +258,16 @@ export default function ButtonGridLive({ widget }: { widget: ButtonGridWidget })
                   {rt?.feedbackLabel ?? cell?.label ?? `B${cellIdx + 1}`}
                 </span>
               )}
+              {/* Behaviour at a glance — a grid can mix modes cell by cell. */}
+              <span style={{
+                position: 'absolute', left: 3, bottom: 1,
+                fontSize: Math.max(8, Math.round((style.fontSize ?? 12) * 0.62)),
+                lineHeight: 1, fontWeight: 700, fontFamily: 'monospace',
+                color: isActive ? style.backgroundColor : color,
+                opacity: 0.65, pointerEvents: 'none',
+              }}>
+                {BEHAVIOR_BADGE[cell?.behavior ?? 'momentary']}
+              </span>
             </div>
           );
         })}

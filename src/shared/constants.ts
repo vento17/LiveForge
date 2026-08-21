@@ -38,6 +38,9 @@ export const DEFAULT_MATH_RECT           = { x: 0, y: 0, width: 260, height: 200
 export const DEFAULT_VALUE_DISPLAY_RECT  = { x: 0, y: 0, width: 200, height: 120 };
 export const DEFAULT_MASTER_LEVEL_RECT   = { x: 0, y: 0, width: 130, height: 340 };
 export const DEFAULT_INSTANCE_RECT       = { x: 0, y: 0, width: 200, height: 200 };
+export const DEFAULT_KEYBOARD_RECT       = { x: 0, y: 0, width: 420, height: 180 };
+// Big by default — it carries two rows of tabs and a body of text.
+export const DEFAULT_MANUAL_RECT         = { x: 0, y: 0, width: 900, height: 560 };
 
 export const MIDI_VALUE_MIN  = 0;
 export const MIDI_VALUE_MAX  = 127;

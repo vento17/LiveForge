@@ -15,7 +15,7 @@ export default function SliderBankLive({ widget }: { widget: SliderBankWidget })
   const count = countX * countY;
   const runtime = useWidgetRuntime(widget.id);
   const setCellValue = useStore((s) => s.setCellValue);
-  const isVertical = orientation === 'vertical';
+  const isVertical = (orientation ?? 'vertical') === 'vertical';
 
   const widgetRef = useRef(widget);
   widgetRef.current = widget;

@@ -19,7 +19,7 @@ export default function SliderBankDesign({ widget }: { widget: SliderBankWidget 
       {Array.from({ length: count }, (_, i) => {
         const cell = cells[i];
         const cellColor = cell?.color ?? style.foregroundColor;
-        const isVertical = orientation === 'vertical';
+        const isVertical = (orientation ?? 'vertical') === 'vertical';
         return (
           <div key={i} style={{
             position: 'relative',

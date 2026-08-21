@@ -2,21 +2,39 @@ import dgram from 'dgram';
 
 // Raw Art-Net sender — bypasses the artnet npm library which always pads to 512 channels.
 // Builds ArtDmx (OpCode 0x5000) packets with data length = highest channel used.
+//
+// Supports multiple named outputs (different target machines). Each output keeps its
+// OWN universe/channel state so a value addressed to one machine never leaks to another.
 
 const ART_NET_PORT = 6454;
 const FLUSH_INTERVAL_MS = 23; // ~44 Hz
+const PRIMARY = 'primary';
+
+interface Output {
+  host: string;
+  universes: Map<number, Map<number, number>>; // universe → (1-indexed ch → value)
+  dirty: Set<number>;
+}
 
 export class ArtNetService {
   private socket: dgram.Socket | null = null;
-  private host = '255.255.255.255';
-  private universes = new Map<number, Map<number, number>>(); // universe → (1-indexed ch → value)
-  private dirty = new Set<number>();
+  private outputs = new Map<string, Output>();
   private timer: NodeJS.Timeout | null = null;
   private seq = 0;
 
-  configure(targetHost: string): void {
+  configure(outputs: Array<{ id: string; host: string }>): void {
     this.cleanup();
-    this.host = targetHost;
+    this.outputs.clear();
+    const list = outputs.length ? outputs : [{ id: PRIMARY, host: '255.255.255.255' }];
+    for (const o of list) {
+      const host = (o.host ?? '').trim() || '255.255.255.255';
+      this.outputs.set(o.id, { host, universes: new Map(), dirty: new Set() });
+    }
+    if (!this.outputs.has(PRIMARY)) {
+      // Guarantee a fallback so mappings without a valid outputId still send.
+      const first = this.outputs.values().next().value as Output | undefined;
+      if (first) this.outputs.set(PRIMARY, first);
+    }
     const sock = dgram.createSocket('udp4');
     sock.bind(0, () => {
       try { sock.setBroadcast(true); } catch { /* unicast target, no broadcast needed */ }
@@ -25,20 +43,28 @@ export class ArtNetService {
     this.startFlushLoop();
   }
 
-  setChannel(universe: number, channel: number, value: number): void {
-    this.getOrCreate(universe).set(channel, value);
-    this.dirty.add(universe);
+  private resolve(outputId: string | undefined): Output | undefined {
+    return this.outputs.get(outputId ?? PRIMARY) ?? this.outputs.get(PRIMARY);
   }
 
-  setChannels(universe: number, channels: Record<number, number>): void {
-    const m = this.getOrCreate(universe);
+  setChannel(outputId: string | undefined, universe: number, channel: number, value: number): void {
+    const out = this.resolve(outputId);
+    if (!out) return;
+    this.getOrCreate(out, universe).set(channel, value);
+    out.dirty.add(universe);
+  }
+
+  setChannels(outputId: string | undefined, universe: number, channels: Record<number, number>): void {
+    const out = this.resolve(outputId);
+    if (!out) return;
+    const m = this.getOrCreate(out, universe);
     for (const [ch, val] of Object.entries(channels)) m.set(Number(ch), val);
-    this.dirty.add(universe);
+    out.dirty.add(universe);
   }
 
-  private getOrCreate(universe: number): Map<number, number> {
-    if (!this.universes.has(universe)) this.universes.set(universe, new Map());
-    return this.universes.get(universe)!;
+  private getOrCreate(out: Output, universe: number): Map<number, number> {
+    if (!out.universes.has(universe)) out.universes.set(universe, new Map());
+    return out.universes.get(universe)!;
   }
 
   private startFlushLoop(): void {
@@ -47,15 +73,21 @@ export class ArtNetService {
   }
 
   private flush(): void {
-    if (!this.socket || this.dirty.size === 0) return;
-    for (const universe of this.dirty) {
-      const chMap = this.universes.get(universe);
-      if (chMap && chMap.size > 0) this.sendPacket(universe, chMap);
+    if (!this.socket) return;
+    // Iterate distinct Output objects (PRIMARY may alias another entry).
+    const seen = new Set<Output>();
+    for (const out of this.outputs.values()) {
+      if (seen.has(out) || out.dirty.size === 0) continue;
+      seen.add(out);
+      for (const universe of out.dirty) {
+        const chMap = out.universes.get(universe);
+        if (chMap && chMap.size > 0) this.sendPacket(out.host, universe, chMap);
+      }
+      out.dirty.clear();
     }
-    this.dirty.clear();
   }
 
-  private sendPacket(universe: number, chMap: Map<number, number>): void {
+  private sendPacket(host: string, universe: number, chMap: Map<number, number>): void {
     if (!this.socket) return;
 
     const maxCh = Math.max(...chMap.keys());
@@ -75,7 +107,7 @@ export class ArtNetService {
       if (ch >= 1 && ch <= dataLen) buf[17 + ch] = val;
     }
 
-    this.socket.send(buf, ART_NET_PORT, this.host);
+    this.socket.send(buf, ART_NET_PORT, host);
   }
 
   private cleanup(): void {

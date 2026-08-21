@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useLayoutEffect } from 'react';
 import { useStore } from '../../store';
 import {
   findSlaveLink, listLinkableSources, sourceCells, listRouters, pageIdOfWidget,
@@ -87,13 +87,31 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
     setView('routers');
   };
 
+  // The menu is big enough now that opening it near an edge would push it off
+  // screen, so measure and pull it back in. Re-runs per view: each view is a
+  // different height.
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: x, top: y });
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const margin = 8;
+    setPos({
+      left: Math.max(margin, Math.min(x, window.innerWidth - width - margin)),
+      top: Math.max(margin, Math.min(y, window.innerHeight - height - margin)),
+    });
+  }, [x, y, view]);
+
   return (
     <div
+      ref={menuRef}
       style={{
-        position: 'fixed', left: x, top: y, zIndex: 9999,
-        background: '#1a1a1a', border: '1px solid #333',
-        borderRadius: 4, padding: '4px 0', minWidth: 190, maxHeight: 360, overflowY: 'auto',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.6)', fontFamily: 'monospace',
+        position: 'fixed', left: pos.left, top: pos.top, zIndex: 9999,
+        background: '#1a1a1a', border: '1px solid #3a3a3a',
+        borderRadius: 6, padding: '6px 0', minWidth: 300, maxWidth: 420,
+        maxHeight: '75vh', overflowY: 'auto',
+        boxShadow: '0 6px 28px rgba(0,0,0,0.75)', fontFamily: 'monospace',
       }}
       onPointerDown={(e) => e.stopPropagation()}
     >
@@ -105,6 +123,7 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
                 ▶ slaved to <span style={{ color: '#ff5555' }}>{slaveLink.source.primary}</span>
                 <span style={{ color: '#777' }}> · {slaveLink.source.secondary}</span>
               </div>
+              <div style={dividerStyle} />
               <button style={itemStyle('#ff6666')} onClick={() => { useStore.getState().unlinkSlaveCell(widgetId, cellIndex); onClose(); }}>
                 ✕ Unlink
               </button>
@@ -128,7 +147,7 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
               {hasMidi && <button style={itemStyle()} onClick={() => startLearn('midi')}>⬤ Learn MIDI CC</button>}
               {hasOsc  && <button style={itemStyle()} onClick={() => startLearn('osc')}>⬤ Learn OSC</button>}
               {!hasMidi && !hasOsc && (
-                <div style={{ padding: '5px 12px', color: '#555', fontSize: 10 }}>
+                <div style={emptyStyle}>
                   no MIDI/OSC connection — add one in Settings
                 </div>
               )}
@@ -144,8 +163,10 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
           {listLinkableSources(project).length === 0 && (
             <div style={emptyStyle}>no source widgets</div>
           )}
-          {listLinkableSources(project).map((group) => (
+          {listLinkableSources(project).map((group, gi) => (
             <div key={group.pageId}>
+              {/* Rule between pages so a long source list reads as groups. */}
+              {gi > 0 && <div style={dividerStyle} />}
               {project.pages.length > 1 && <div style={headerStyle}>{group.pageName}</div>}
               {group.widgets.map((w) => (
                 <button key={w.id} style={itemStyle()} onClick={() => goPickCell(w.id)}>
@@ -190,6 +211,7 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
               {project.pages.length > 1 && <span style={{ color: '#666' }}> · {r.pageName}</span>}
             </button>
           ))}
+          <div style={dividerStyle} />
           <button style={itemStyle('#66cc99')} onClick={commitLinkNewRouter}>
             ＋ New router
           </button>
@@ -199,26 +221,27 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
   );
 }
 
+// Sized to stay readable standing over a monitor lying flat on a table.
 const itemStyle = (color?: string): React.CSSProperties => ({
-  display: 'block', width: '100%', padding: '5px 12px',
+  display: 'block', width: '100%', minHeight: 40, padding: '10px 16px',
   background: 'none', border: 'none', cursor: 'pointer',
-  fontSize: 11, color: color ?? '#ccc', textAlign: 'left', fontFamily: 'inherit',
+  fontSize: 15, color: color ?? '#ccc', textAlign: 'left', fontFamily: 'inherit',
 });
 
 const backStyle: React.CSSProperties = {
   ...itemStyle('#888'),
-  fontSize: 10,
+  fontSize: 13,
 };
 
 const headerStyle: React.CSSProperties = {
-  padding: '4px 12px', color: '#777', fontSize: 10,
+  padding: '8px 16px', color: '#8a8a8a', fontSize: 12,
   textTransform: 'uppercase', letterSpacing: 1,
 };
 
 const dividerStyle: React.CSSProperties = {
-  height: 1, background: '#2a2a2a', margin: '4px 0',
+  height: 1, background: '#3a3a3a', margin: '6px 0',
 };
 
 const emptyStyle: React.CSSProperties = {
-  padding: '5px 12px', color: '#555', fontSize: 11,
+  padding: '10px 16px', color: '#555', fontSize: 14,
 };

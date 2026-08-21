@@ -1,4 +1,4 @@
-import type { Widget, ValueDisplayMode, TimelineWidget, TrigTrack } from '../../shared/types/project';
+import type { Widget, ValueDisplayMode, TimelineWidget, TrigTrack, CueTrack } from '../../shared/types/project';
 import type { Mapping } from '../../shared/types/mapping';
 
 // Individual trig markers exposed as their own source cells, laid out AFTER the
@@ -15,6 +15,18 @@ export function timelineTrigCells(w: TimelineWidget): { trackIndex: number; mark
   return out;
 }
 
+// Cue blocks exposed as their own source cells, laid out AFTER the per-track and
+// trig-marker cells. Same append-only reasoning as timelineTrigCells.
+export function timelineCueCells(w: TimelineWidget): { trackIndex: number; regionIndex: number }[] {
+  const out: { trackIndex: number; regionIndex: number }[] = [];
+  w.tracks.forEach((t, ti) => {
+    if (t.kind === 'cue') {
+      (t as CueTrack).cues.forEach((_, ri) => out.push({ trackIndex: ti, regionIndex: ri }));
+    }
+  });
+  return out;
+}
+
 export function cellCount(widget: Widget): number {
   switch (widget.kind) {
     case 'sliderBank':     return widget.countX * widget.countY;
@@ -25,7 +37,7 @@ export function cellCount(widget: Widget): number {
     case 'graphWidget':    return 1;
     case 'submasters':     return widget.countX;
     case 'autoBpm':        return 16; // 8 trigger cells (0-7) + 8 ramp cells (8-15)
-    case 'timeline':       return widget.tracks.length + timelineTrigCells(widget).length;
+    case 'timeline':       return widget.tracks.length + timelineTrigCells(widget).length + timelineCueCells(widget).length;
     case 'audioAnalyser':  return 21; // 0-4=audio, 5-12=BPM trig, 13-20=BPM ramp
     case 'soundPlayer':    return widget.tracks.length;
     case 'cues':           return widget.cues.length;  // one cell per cue → linkable/slave
@@ -39,6 +51,8 @@ export function cellCount(widget: Widget): number {
     case 'mathWidget':     return 1;
     case 'masterLevel':    return 1;
     case 'instance':       return 0;  // mirrors its source; no own runtime cells
+    case 'keyboard':       return widget.keys.length;   // one cell per bound key
+    case 'manual':         return 0;  // documentation only — never a link source
   }
 }
 

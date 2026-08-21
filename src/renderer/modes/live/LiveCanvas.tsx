@@ -51,17 +51,20 @@ function getLayer(w: Widget): 'under' | 'normal' | 'over' {
 interface LiveCanvasProps {
   page: Page;
   scale: number;
+  // Inactive pages stay mounted (so their widgets keep streaming) but hidden.
+  // Only the visible one may carry the id NetworkLive measures.
+  active?: boolean;
   onSelectWidget?: (id: string) => void;
 }
 
-export default function LiveCanvas({ page, scale, onSelectWidget }: LiveCanvasProps): React.JSX.Element {
+export default function LiveCanvas({ page, scale, active = true, onSelectWidget }: LiveCanvasProps): React.JSX.Element {
   const offsetX = page.liveOffsetX ?? 0;
   const offsetY = page.liveOffsetY ?? 0;
 
   return (
     // Outer div sized to scaled dimensions — flex parent will center this.
     // id lets NetworkLive measure the exact on-screen page rect for click mapping.
-    <div id="lf-page-canvas" style={{
+    <div id={active ? 'lf-page-canvas' : undefined} style={{
       width: page.width * scale,
       height: page.height * scale,
       flexShrink: 0,

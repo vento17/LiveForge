@@ -26,3 +26,10 @@ release/
 
 # User project saves (keep local, never publish)
 Save/
+
+# Python bytecode — regenerated on every sidecar run, pure churn in the repo
+__pycache__/
+*.pyc
+
+# TypeScript incremental build cache
+*.tsbuildinfo

@@ -169,16 +169,28 @@ function MathParams({ w, update }: { w: MathWidget; update: UpdateFn }): React.J
         onChange={(v) => update({ operation: v as MathOperation })}
       />
       <SliderRow
-        label="Scale"
-        value={w.scale} min={0} max={4} step={0.01}
-        fmt={(v) => `×${v.toFixed(2)}`}
-        onChange={(v) => update({ scale: v })}
+        label="In min"
+        value={w.inMin ?? 0} min={-1} max={2} step={0.01}
+        fmt={(v) => v.toFixed(2)}
+        onChange={(v) => update({ inMin: v })}
       />
       <SliderRow
-        label="Offset"
-        value={w.offset} min={-1} max={1} step={0.01}
-        fmt={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`}
-        onChange={(v) => update({ offset: v })}
+        label="In max"
+        value={w.inMax ?? 1} min={-1} max={2} step={0.01}
+        fmt={(v) => v.toFixed(2)}
+        onChange={(v) => update({ inMax: v })}
+      />
+      <SliderRow
+        label="Out min"
+        value={w.outMin ?? 0} min={-1} max={2} step={0.01}
+        fmt={(v) => v.toFixed(2)}
+        onChange={(v) => update({ outMin: v })}
+      />
+      <SliderRow
+        label="Out max"
+        value={w.outMax ?? 1} min={-1} max={2} step={0.01}
+        fmt={(v) => v.toFixed(2)}
+        onChange={(v) => update({ outMax: v })}
       />
     </>
   );
@@ -210,15 +222,23 @@ function ValueDisplayParams({ w, update }: { w: ValueDisplayWidget; update: Upda
 function StepSeqParams({ w, update }: { w: StepSequencerWidget; update: UpdateFn }): React.JSX.Element {
   const speeds: SpeedMultiplier[] = [0.125, 0.25, 0.5, 1, 2, 4, 8];
   return (
-    <SelectRow
-      label="Speed"
-      value={String(w.speedMultiplier)}
-      options={speeds.map((s) => ({
-        value: String(s),
-        label: s < 1 ? `×${s}  (slower)` : s === 1 ? '×1  (normal)' : `×${s}  (faster)`,
-      }))}
-      onChange={(v) => update({ speedMultiplier: parseFloat(v) as SpeedMultiplier })}
-    />
+    <>
+      <SelectRow
+        label="Speed"
+        value={String(w.speedMultiplier)}
+        options={speeds.map((s) => ({
+          value: String(s),
+          label: s < 1 ? `×${s}  (slower)` : s === 1 ? '×1  (normal)' : `×${s}  (faster)`,
+        }))}
+        onChange={(v) => update({ speedMultiplier: parseFloat(v) as SpeedMultiplier })}
+      />
+      <SliderRow
+        label="Smooth"
+        value={w.smooth ?? 0} min={0} max={1}
+        fmt={(v) => v <= 0 ? 'off' : `${Math.round(v * 100)}%`}
+        onChange={(v) => update({ smooth: v })}
+      />
+    </>
   );
 }
 

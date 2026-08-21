@@ -22,24 +22,28 @@ export function resetMasterGains(): void {
 export function dispatchValue(mapping: Mapping, value: number): void {
   if (!mapping) return;
   const gain = masterGains[mapping.type] ?? 1;
-  const v = Math.max(0, Math.min(1, value)) * gain;
+  // MIDI and DMX are hard-bounded by their own protocols, so anything outside
+  // 0–1 is meaningless there and gets clamped. OSC is just a float: a range
+  // mapped to -1…1 (a bipolar joystick, a TouchDesigner offset) has to survive,
+  // so it passes through unclamped.
+  const v = (mapping.type === 'osc' ? value : Math.max(0, Math.min(1, value))) * gain;
 
   switch (mapping.type) {
     case 'midi': {
       const scaled = Math.round(v * (mapping.maxValue - mapping.minValue) + mapping.minValue);
       switch (mapping.messageType) {
         case 'controlChange':
-          bridge.send('tr:midi:sendCC', { channel: mapping.channel, cc: mapping.number, value: scaled });
+          bridge.send('tr:midi:sendCC', { channel: mapping.channel, cc: mapping.number, value: scaled, outputId: mapping.outputId });
           break;
         case 'noteOn':
         case 'noteOff':
-          bridge.send('tr:midi:sendNote', { channel: mapping.channel, note: mapping.number, velocity: scaled, on: mapping.messageType === 'noteOn' });
+          bridge.send('tr:midi:sendNote', { channel: mapping.channel, note: mapping.number, velocity: scaled, on: mapping.messageType === 'noteOn', outputId: mapping.outputId });
           break;
         case 'pitchBend':
-          bridge.send('tr:midi:sendPB', { channel: mapping.channel, value: Math.round(v * 16383) });
+          bridge.send('tr:midi:sendPB', { channel: mapping.channel, value: Math.round(v * 16383), outputId: mapping.outputId });
           break;
         default:
-          bridge.send('tr:midi:sendCC', { channel: mapping.channel, cc: mapping.number, value: scaled });
+          bridge.send('tr:midi:sendCC', { channel: mapping.channel, cc: mapping.number, value: scaled, outputId: mapping.outputId });
       }
       break;
     }
@@ -47,17 +51,17 @@ export function dispatchValue(mapping: Mapping, value: number): void {
       const oscVal = (mapping.minValue !== undefined && mapping.maxValue !== undefined)
         ? v * (mapping.maxValue - mapping.minValue) + mapping.minValue
         : v;
-      bridge.send('tr:osc:send', { address: mapping.address, args: [{ type: 'f', value: oscVal }] });
+      bridge.send('tr:osc:send', { address: mapping.address, args: [{ type: 'f', value: oscVal }], outputId: mapping.outputId });
       break;
     }
     case 'artnet': {
       const scaled = Math.round(v * (mapping.maxValue - mapping.minValue) + mapping.minValue);
-      bridge.send('tr:artnet:sendChannel', { universe: mapping.universe, channel: mapping.channel, value: scaled });
+      bridge.send('tr:artnet:sendChannel', { universe: mapping.universe, channel: mapping.channel, value: scaled, outputId: mapping.outputId });
       break;
     }
     case 'sacn': {
       const scaled = Math.round(v * (mapping.maxValue - mapping.minValue) + mapping.minValue);
-      bridge.send('tr:sacn:sendChannel', { universe: mapping.universe, channel: mapping.channel, value: scaled, priority: mapping.priority });
+      bridge.send('tr:sacn:sendChannel', { universe: mapping.universe, channel: mapping.channel, value: scaled, priority: mapping.priority, outputId: mapping.outputId });
       break;
     }
     case 'enttec': {
@@ -75,9 +79,9 @@ export function dispatchButton(mapping: Mapping, on: boolean, onValue: number, o
     case 'midi': {
       const value = on ? onValue : offValue;
       if (mapping.messageType === 'noteOn' || mapping.messageType === 'noteOff') {
-        bridge.send('tr:midi:sendNote', { channel: mapping.channel, note: mapping.number, velocity: on ? onValue : 0, on });
+        bridge.send('tr:midi:sendNote', { channel: mapping.channel, note: mapping.number, velocity: on ? onValue : 0, on, outputId: mapping.outputId });
       } else {
-        bridge.send('tr:midi:sendCC', { channel: mapping.channel, cc: mapping.number, value });
+        bridge.send('tr:midi:sendCC', { channel: mapping.channel, cc: mapping.number, value, outputId: mapping.outputId });
       }
       break;
     }

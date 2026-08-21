@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react';
-import type { RouterRow, RouterWidget } from '../../../shared/types/project';
+import type { RouterRow, RouterWidget, Widget } from '../../../shared/types/project';
 import type { Mapping } from '../../../shared/types/mapping';
 import { useStore } from '../../store';
+import { cellCount } from '../../widgets/utils';
+import { remapRange, isIdentityRange } from '../../widgets/base/range';
 import { dispatchValue } from '../../ipc/dispatch';
 import { bridge } from '../../ipc/bridge';
 
@@ -58,19 +60,48 @@ function isButtonTarget(widgetId: string): boolean {
   return false;
 }
 
-function routeValue(row: RouterRow, v: number): void {
+function findWidget(widgetId: string): Widget | undefined {
+  for (const page of useStore.getState().project.pages) {
+    const w = page.widgets.find((x) => x.id === widgetId);
+    if (w) return w;
+  }
+  return undefined;
+}
+
+function driveCell(widgetId: string, cellIdx: number, v: number, isButton: boolean): void {
+  useStore.getState().setCellValue(widgetId, cellIdx, v);
+  // Buttons show their lit state via `active`, not `value` — keep it in sync.
+  if (isButton) useStore.getState().setButtonActive(widgetId, cellIdx, v >= 0.5);
+  const cellMapping = getWidgetCellMapping(widgetId, cellIdx);
+  if (cellMapping) dispatchValue(cellMapping, v);
+}
+
+// srcIndex is set when the row listens to a whole widget: the value then belongs
+// to one specific source cell, and an ALL output mirrors it onto the SAME index
+// (bank → bank, 1:1). Without it an ALL output fans one value out to every cell.
+function routeValue(row: RouterRow, vIn: number, srcIndex?: number): void {
   for (const out of row.outputs) {
+    // Each output gets its own travel through the source's range.
+    const v = isIdentityRange(out) ? vIn : remapRange(vIn, out);
     if (out.targetWidgetId) {
-      const cellIdx = out.targetCellIndex ?? 0;
-      useStore.getState().setCellValue(out.targetWidgetId, cellIdx, v);
-      // Buttons show their lit state via `active`, not `value` — keep it in sync.
-      if (isButtonTarget(out.targetWidgetId)) {
-        useStore.getState().setButtonActive(out.targetWidgetId, cellIdx, v >= 0.5);
+      const isButton = isButtonTarget(out.targetWidgetId);
+      if (out.targetAllCells) {
+        const w = findWidget(out.targetWidgetId);
+        const n = w ? cellCount(w) : 0;
+        if (srcIndex !== undefined) {
+          if (srcIndex < n) driveCell(out.targetWidgetId, srcIndex, v, isButton);
+        } else {
+          for (let i = 0; i < n; i++) driveCell(out.targetWidgetId, i, v, isButton);
+        }
+      } else {
+        // A single-cell output cannot follow an index, so it tracks the first
+        // source cell only.
+        if (srcIndex === undefined || srcIndex === 0) {
+          driveCell(out.targetWidgetId, out.targetCellIndex ?? 0, v, isButton);
+        }
       }
-      const cellMapping = getWidgetCellMapping(out.targetWidgetId, cellIdx);
-      if (cellMapping) dispatchValue(cellMapping, v);
     } else if (out.mapping) {
-      dispatchValue(out.mapping, v);
+      if (srcIndex === undefined || srcIndex === 0) dispatchValue(out.mapping, v);
     }
   }
 }
@@ -101,6 +132,22 @@ export default function RouterEngine(): null {
 
         const wRuntime = state.runtime.widgets[row.widgetId];
         if (!wRuntime) continue;
+
+        if (row.allCells) {
+          // Every cell of the source is its own signal, tracked separately so a
+          // bank mirrors onto another bank fader by fader.
+          for (let i = 0; i < wRuntime.cells.length; i++) {
+            const c = wRuntime.cells[i];
+            if (!c) continue;
+            const cv = c.value !== undefined ? c.value : (c.active ? 1 : 0);
+            const key = `${row.id}:${i}`;
+            if (prevValues.current[key] === cv) continue;
+            prevValues.current[key] = cv;
+            routeValue(row, cv, i);
+          }
+          continue;
+        }
+
         const cell = wRuntime.cells[row.cellIndex];
         if (!cell) continue;
 

@@ -1,11 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useStore, useActivePage, useProject } from '../../../store';
 import type { StoreState } from '../../../store';
-import type { MidiConnection, MidiInputConnection, OscConnection, ArtNetConnection, SacnConnection, LtcAudioConnection, AudioOutputConnection, EnttecDmxConnection, ImageWidget, TextWidget, BlendMode, TextFrame, TextAlign, FontWeight, FontStyle, StepSequencerWidget, GraphWidget, XYPadWidget, SpeedMultiplier, WidgetStyle, ButtonGridWidget, ButtonBehavior, KnobBankWidget, CuesWidget, TimelineWidget, RouterWidget, RouterRow, RouterOutput, RouterInputType, AutoBpmWidget, BeatOutput, LfoWidget, MathWidget, MathOperation, LfoWaveform, ValueDisplayWidget, ValueDisplayFormat } from '../../../../shared/types/project';
+import type { MidiConnection, MidiInputConnection, OscConnection, ArtNetConnection, SacnConnection, LtcAudioConnection, AudioOutputConnection, EnttecDmxConnection, ImageWidget, TextWidget, BlendMode, TextFrame, TextAlign, FontWeight, FontStyle, StepSequencerWidget, GraphWidget, XYPadWidget, SliderBankWidget, SpeedMultiplier, WidgetStyle, ButtonGridWidget, ButtonBehavior, KnobBankWidget, CuesWidget, TimelineWidget, RouterWidget, RouterRow, RouterOutput, RouterInputType, AutoBpmWidget, BeatOutput, LfoWidget, MathWidget, MathOperation, LfoWaveform, ValueDisplayWidget, ValueDisplayFormat } from '../../../../shared/types/project';
 import { BEAT_DIVISORS } from '../../../../shared/types/project';
 import type { Mapping, MidiMapping, OscMapping, EnttecDmxMapping, ArtNetMapping, SacnMapping } from '../../../../shared/types/mapping';
 import { bridge } from '../../../ipc/bridge';
 import { dispatchValue, dispatchButton } from '../../../ipc/dispatch';
+import {
+  SETTINGS_ENTRIES as MANUAL_SETTINGS_ENTRIES,
+  WIDGET_ENTRIES as MANUAL_WIDGET_ENTRIES,
+} from '../../../widgets/Manual/manualContent';
+import { keyCapLabel, RESERVED_CODES } from '../../../widgets/Keyboard/keyNames';
+import { cellLabel } from '../../../widgets/base/links';
+import NumberInput from '../../../widgets/base/NumberInput';
+import { nextFreeCc } from '../../../widgets/defaults';
+import { artnetConfigOutputs, sacnConfigOutputs, oscConfigOutputs, midiConfigOutputs, listOutputs } from '../../../../shared/outputs';
+import type { OutputProtocol } from '../../../../shared/outputs';
 import logoUrl from '../../../assets/Logo.png';
 import { GLOBAL_BAR_HEIGHT } from '../../GlobalBar';
 
@@ -63,7 +73,11 @@ export default function Inspector(): React.JSX.Element {
                                               ? <MasterLevelInspectorPanel widget={widget as import('../../../../shared/types/project').MasterLevelWidget} activePageId={activePageId} updateWidget={updateWidget} updateWidgetRect={updateWidgetRect} />
                                               : widget.kind === 'instance'
                                                 ? <InstanceInspectorPanel widget={widget as import('../../../../shared/types/project').InstanceWidget} activePageId={activePageId} updateWidget={updateWidget} updateWidgetRect={updateWidgetRect} />
-                                                : <WidgetPanel widget={widget} activePageId={activePageId} updateWidget={updateWidget} updateWidgetRect={updateWidgetRect} />
+                                                : widget.kind === 'keyboard'
+                                                  ? <KeyboardInspectorPanel widget={widget as import('../../../../shared/types/project').KeyboardWidget} activePageId={activePageId} updateWidget={updateWidget} updateWidgetRect={updateWidgetRect} />
+                                                : widget.kind === 'manual'
+                                                  ? <ManualInspectorPanel widget={widget as import('../../../../shared/types/project').ManualWidget} activePageId={activePageId} updateWidget={updateWidget} updateWidgetRect={updateWidgetRect} />
+                                                  : <WidgetPanel widget={widget} activePageId={activePageId} updateWidget={updateWidget} updateWidgetRect={updateWidgetRect} />
           : <NoSelectionPanel />
       }
     </div>
@@ -193,6 +207,23 @@ function WidgetPanel({ widget, activePageId, updateWidget, updateWidgetRect }: {
               <NumInput value={bankWidget.spacingY} onChange={(v) => patch({ spacingY: Math.max(0, v) })} />
             </Field>
           </Row>
+          {widget.kind === 'sliderBank' && (() => {
+            const horizontal = (widget as SliderBankWidget).orientation === 'horizontal';
+            return (
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                minHeight: 40, fontSize: 13, color: 'var(--color-text)', userSelect: 'none',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={horizontal}
+                  onChange={(e) => patch({ orientation: e.target.checked ? 'horizontal' : 'vertical' })}
+                  style={{ width: 18, height: 18, cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+                />
+                Horizontal sliders
+              </label>
+            );
+          })()}
         </Section>
       )}
 
@@ -262,9 +293,36 @@ function WidgetPanel({ widget, activePageId, updateWidget, updateWidgetRect }: {
             <option value="artnet">Art-Net (DMX)</option>
             <option value="sacn">sACN / E1.31 (DMX)</option>
           </select>
-          <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 5 }}>
+          <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 5 }}>
             Changes protocol and resets cell mappings to defaults.
           </div>
+          {(() => {
+            const proto = widget.outputProtocol as string;
+            if (!['midi', 'osc', 'artnet', 'sacn'].includes(proto)) return null;
+            const outs = listOutputs(project.connections, proto as OutputProtocol);
+            if (outs.length <= 1) return null;
+            const bw = widget as { mapping?: Mapping; cells?: Array<{ mapping?: Mapping | null }> };
+            const current = (bw.mapping as { outputId?: string } | undefined)?.outputId
+              ?? (bw.cells?.[0]?.mapping as { outputId?: string } | null | undefined)?.outputId
+              ?? 'primary';
+            return (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 3 }}>Output (all cells)</div>
+                <select style={styles.input} value={current}
+                  onChange={(e) => {
+                    const outputId = e.target.value === 'primary' ? undefined : e.target.value;
+                    const apply = (m: Mapping | null | undefined): Mapping | null | undefined =>
+                      m ? ({ ...m, outputId } as Mapping) : m;
+                    const partial: Record<string, unknown> = {};
+                    if (bw.cells) partial.cells = bw.cells.map((c) => ({ ...c, mapping: apply(c.mapping) }));
+                    if (bw.mapping) partial.mapping = apply(bw.mapping);
+                    patch(partial);
+                  }}>
+                  {outs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+            );
+          })()}
         </Section>
       )}
 
@@ -273,22 +331,24 @@ function WidgetPanel({ widget, activePageId, updateWidget, updateWidgetRect }: {
       {widget.kind === 'buttonGrid' && (
         <>
           <Section label="Button behavior">
-            <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 6 }}>
-              Set all cells to:
+            <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 6 }}>
+              Set all cells to — override one at a time in ✏ Cells:
             </div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {(() => {
                 const bw = widget as ButtonGridWidget;
-                const normalized = bw.cells.map((c) => (c.behavior === 'momentary' || !c.behavior) ? 'pulse' : c.behavior);
+                // No normalising: momentary is a real behaviour, not an alias for
+                // pulse. A mixed grid highlights nothing, which is correct.
+                const normalized = bw.cells.map((c) => c.behavior ?? 'momentary');
                 const activeBehavior = normalized.length > 0 && normalized.every((b) => b === normalized[0]) ? normalized[0] : null;
-                return (['pulse', 'toggle', 'radio'] as ButtonBehavior[]).map((b) => {
+                return (['momentary', 'pulse', 'toggle', 'radio'] as ButtonBehavior[]).map((b) => {
                   const isActive = activeBehavior === b;
                   return (
                     <button key={b} onClick={() => {
                       const newCells = bw.cells.map((c) => ({ ...c, behavior: b }));
                       updateWidget(activePageId, widget.id, { cells: newCells } as never);
                     }} style={{
-                      padding: '4px 8px', fontSize: 11, cursor: 'pointer', borderRadius: 3,
+                      padding: '7px 10px', minHeight: 36, fontSize: 13, cursor: 'pointer', borderRadius: 3,
                       background: isActive ? '#ffffff' : 'var(--color-surface-2)',
                       border: `1px solid ${isActive ? '#ffffff' : 'var(--color-border)'}`,
                       color: isActive ? '#000000' : 'var(--color-text)',
@@ -298,10 +358,16 @@ function WidgetPanel({ widget, activePageId, updateWidget, updateWidgetRect }: {
                 });
               })()}
             </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 8, lineHeight: 1.6 }}>
+              <b>M</b> momentary — 1 while held, 0 on release<br />
+              <b>P</b> pulse — a short 1 then back to 0<br />
+              <b>T</b> toggle — each press flips the state<br />
+              <b>R</b> radio — only one stays on
+            </div>
           </Section>
 
           <Section label="APC Mini">
-            <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 6 }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 6 }}>
               Configura 8×8 grid, Note On ch 1, layout APC Mini.<br />
               Rinomina la porta loopMidi a <strong style={{ color: 'var(--color-text)' }}>"APC MINI"</strong>.
             </div>
@@ -309,7 +375,7 @@ function WidgetPanel({ widget, activePageId, updateWidget, updateWidgetRect }: {
               ⬛ Apply APC Mini layout
             </ResetBtn>
             {apcConflicts.length > 0 && (
-              <div style={{ marginTop: 8, fontSize: 10, color: '#e6a000', lineHeight: 1.5 }}>
+              <div style={{ marginTop: 8, fontSize: 12, color: '#e6a000', lineHeight: 1.5 }}>
                 ⚠ Altri widget usano ch 1 note 0–63:
                 {apcConflicts.map((c, idx) => (
                   <div key={idx} style={{ paddingLeft: 8 }}>· {c}</div>
@@ -373,7 +439,7 @@ function ResetBtn({ children, onClick }: { children: React.ReactNode; onClick: (
       color: 'var(--color-text-dim)',
       borderRadius: 'var(--radius-sm)',
       padding: '4px 8px',
-      fontSize: 11, cursor: 'pointer',
+      fontSize: 12, cursor: 'pointer',
       textAlign: 'left',
     }}>
       {children}
@@ -451,7 +517,7 @@ function TimelineInspectorPanel({ widget, activePageId, updateWidget, updateWidg
           </Row>
         )}
       </Section>
-      <div style={{ fontSize: 11, color: 'var(--color-text-dim)', padding: '8px 12px', lineHeight: 1.5 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-dim)', padding: '8px 12px', lineHeight: 1.5 }}>
         {widget.tracks.length} track{widget.tracks.length !== 1 ? 's' : ''}.
         <br />Manage tracks in Live mode.
       </div>
@@ -484,7 +550,7 @@ function CuesInspectorPanel({ widget, activePageId, updateWidget }: {
       <Section label="Label">
         <input style={styles.input} value={widget.label} onChange={(e) => patch({ label: e.target.value })} />
       </Section>
-      <div style={{ fontSize: 11, color: 'var(--color-text-dim)', padding: '8px 12px', lineHeight: 1.5 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-dim)', padding: '8px 12px', lineHeight: 1.5 }}>
         {widget.cues.length} cue{widget.cues.length !== 1 ? 's' : ''} saved. Manage in Live mode.
         <br />OSC trigger: /<em>cuename</em>
       </div>
@@ -493,7 +559,7 @@ function CuesInspectorPanel({ widget, activePageId, updateWidget }: {
           const m = widget[key];
           return (
             <div key={key} style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 4, fontWeight: 500 }}>{label}</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 4, fontWeight: 500 }}>{label}</div>
               <select
                 style={{ ...styles.input, marginBottom: 4 }}
                 value={m?.type ?? 'none'}
@@ -566,7 +632,7 @@ function ImagePanel({ widget, activePageId, updateWidget }: {
 
       <Section label="File">
         <div style={{
-          fontSize: 10, color: 'var(--color-text-dim)',
+          fontSize: 12, color: 'var(--color-text-dim)',
           marginBottom: 6, wordBreak: 'break-all',
         }}>
           {widget.src ? 'Image loaded' : 'No image selected'}
@@ -850,7 +916,7 @@ function StepSequencerPanel({ widget, activePageId, updateWidget, updateWidgetRe
           <div style={{ display: 'flex', gap: 4 }}>
             {STEP_COUNT_OPTIONS.map((n) => (
               <button key={n} onClick={() => handleStepCountChange(n)} style={{
-                flex: 1, padding: '4px 0', fontSize: 11, cursor: 'pointer', borderRadius: 3,
+                flex: 1, padding: '4px 0', fontSize: 12, cursor: 'pointer', borderRadius: 3,
                 background: widget.stepCount === n ? 'var(--color-accent)' : 'var(--color-surface-2)',
                 border: `1px solid ${widget.stepCount === n ? 'var(--color-accent)' : 'var(--color-border)'}`,
                 color: widget.stepCount === n ? '#fff' : 'var(--color-text)',
@@ -862,7 +928,7 @@ function StepSequencerPanel({ widget, activePageId, updateWidget, updateWidgetRe
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {SPEED_OPTIONS.map(({ label, value }) => (
               <button key={value} onClick={() => patch({ speedMultiplier: value })} style={{
-                padding: '3px 6px', fontSize: 11, cursor: 'pointer', borderRadius: 3,
+                padding: '3px 6px', fontSize: 12, cursor: 'pointer', borderRadius: 3,
                 background: widget.speedMultiplier === value ? 'var(--color-accent)' : 'var(--color-surface-2)',
                 border: `1px solid ${widget.speedMultiplier === value ? 'var(--color-accent)' : 'var(--color-border)'}`,
                 color: widget.speedMultiplier === value ? '#fff' : 'var(--color-text)',
@@ -1017,6 +1083,7 @@ function StepSequencerPanel({ widget, activePageId, updateWidget, updateWidgetRe
             </Row>
           </>
         )}
+        <OutputSelect mapping={widget.mapping ?? null} onChange={(m) => patch({ mapping: m } as never)} />
       </Section>
 
       <FrameSection style={widget.style} patchStyle={(p) => patch({ style: { ...widget.style, ...p } } as never)} />
@@ -1073,7 +1140,7 @@ function GraphPanel({ widget, activePageId, updateWidget, updateWidgetRect }: {
           <div style={{ display: 'flex', gap: 4 }}>
             {(['bpm', 'manual'] as const).map((m) => (
               <button key={m} onClick={() => patch({ timingMode: m })} style={{
-                flex: 1, padding: '4px 0', fontSize: 11, cursor: 'pointer', borderRadius: 3,
+                flex: 1, padding: '4px 0', fontSize: 12, cursor: 'pointer', borderRadius: 3,
                 background: (widget.timingMode ?? 'bpm') === m ? 'var(--color-accent)' : 'var(--color-surface-2)',
                 border: `1px solid ${(widget.timingMode ?? 'bpm') === m ? 'var(--color-accent)' : 'var(--color-border)'}`,
                 color: (widget.timingMode ?? 'bpm') === m ? '#fff' : 'var(--color-text)',
@@ -1086,7 +1153,7 @@ function GraphPanel({ widget, activePageId, updateWidget, updateWidgetRect }: {
           <div style={{ display: 'flex', gap: 4 }}>
             {(['loop', 'once'] as const).map((m) => (
               <button key={m} onClick={() => patch({ playMode: m })} style={{
-                flex: 1, padding: '4px 0', fontSize: 11, cursor: 'pointer', borderRadius: 3,
+                flex: 1, padding: '4px 0', fontSize: 12, cursor: 'pointer', borderRadius: 3,
                 background: (widget.playMode ?? 'loop') === m ? 'var(--color-accent)' : 'var(--color-surface-2)',
                 border: `1px solid ${(widget.playMode ?? 'loop') === m ? 'var(--color-accent)' : 'var(--color-border)'}`,
                 color: (widget.playMode ?? 'loop') === m ? '#fff' : 'var(--color-text)',
@@ -1101,7 +1168,7 @@ function GraphPanel({ widget, activePageId, updateWidget, updateWidgetRect }: {
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {SPEED_OPTIONS.map(({ label, value }) => (
                 <button key={value} onClick={() => patch({ speedMultiplier: value })} style={{
-                  padding: '3px 6px', fontSize: 11, cursor: 'pointer', borderRadius: 3,
+                  padding: '3px 6px', fontSize: 12, cursor: 'pointer', borderRadius: 3,
                   background: widget.speedMultiplier === value ? 'var(--color-accent)' : 'var(--color-surface-2)',
                   border: `1px solid ${widget.speedMultiplier === value ? 'var(--color-accent)' : 'var(--color-border)'}`,
                   color: widget.speedMultiplier === value ? '#fff' : 'var(--color-text)',
@@ -1264,6 +1331,7 @@ function GraphPanel({ widget, activePageId, updateWidget, updateWidgetRect }: {
             </Row>
           </>
         )}
+        <OutputSelect mapping={widget.mapping ?? null} onChange={(m) => patch({ mapping: m } as never)} />
       </Section>
     </>
   );
@@ -1362,7 +1430,26 @@ function MappingEditor({ mapping, onChange }: {
           </Row>
         </>
       )}
+      <OutputSelect mapping={mapping} onChange={onChange} />
     </>
+  );
+}
+
+// Per-mapping destination picker. Shows only for output protocols that have more
+// than one configured output (primary + named extras). Default = out 1.
+function OutputSelect({ mapping, onChange }: { mapping: Mapping; onChange: (m: Mapping) => void }) {
+  const conns = useProject().connections;
+  if (!mapping || (mapping.type !== 'midi' && mapping.type !== 'osc' && mapping.type !== 'artnet' && mapping.type !== 'sacn')) return null;
+  const outs = listOutputs(conns, mapping.type as OutputProtocol);
+  if (outs.length <= 1) return null;
+  const current = (mapping as { outputId?: string }).outputId ?? 'primary';
+  return (
+    <Field label="Output">
+      <select style={styles.input} value={current}
+        onChange={(e) => onChange({ ...mapping, outputId: e.target.value === 'primary' ? undefined : e.target.value } as Mapping)}>
+        {outs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>
+    </Field>
   );
 }
 
@@ -1453,7 +1540,7 @@ function StatusBadge({ status }: { status: ConnStatus }) {
   const color = status === 'ok' ? '#4caf50' : '#f44336';
   const label = status === 'ok' ? 'connected' : status === 'error' ? 'error' : 'disconnected';
   return (
-    <span style={{ fontSize: 10, marginLeft: 8, color }}>● {label}</span>
+    <span style={{ fontSize: 12, marginLeft: 8, color }}>● {label}</span>
   );
 }
 
@@ -1474,7 +1561,7 @@ function ConnectBtn({ onClick, children, disconnect, disabled }: {
         color: disabled ? 'var(--color-text-dim)' : disconnect ? '#fff' : '#000',
         borderRadius: 'var(--radius-sm)',
         padding: '4px 8px',
-        fontSize: 11, cursor: disabled ? 'not-allowed' : 'pointer',
+        fontSize: 12, cursor: disabled ? 'not-allowed' : 'pointer',
         fontWeight: 600,
         opacity: disabled ? 0.5 : 1,
       }}
@@ -1500,8 +1587,9 @@ const RESOLUTION_PRESETS = [
 function SettingsPanel() {
   const project = useProject();
   const page = useActivePage();
-  const { setProjectName, setConnection, setPageSize, setPageLiveOffset, setTapTriggerMapping, setResetTriggerMapping, setConnectedProtocol, connectedProtocols } = useStore((s) => ({
+  const { setProjectName, setProjectFrameRate, setConnection, setPageSize, setPageLiveOffset, setTapTriggerMapping, setResetTriggerMapping, setConnectedProtocol, connectedProtocols } = useStore((s) => ({
     setProjectName:          s.setProjectName,
+    setProjectFrameRate:     s.setProjectFrameRate,
     setConnection:           s.setConnection,
     setPageSize:             s.setPageSize,
     setPageLiveOffset:       s.setPageLiveOffset,
@@ -1584,7 +1672,7 @@ function SettingsPanel() {
     const virtual  = conn.midi?.virtualPort ?? false;
     if (!portName) return;
     try {
-      const res = await bridge.invoke('tr:midi:openPort', { portName, virtual });
+      const res = await bridge.invoke('tr:midi:openPort', { portName, virtual, extraOutputs: conn.midi ? midiConfigOutputs(conn.midi) : [] });
       const status = res.ok ? 'ok' : 'error';
       setMidiStatus(status);
       if (status === 'ok') setConnectedProtocol('midi', true);
@@ -1597,7 +1685,7 @@ function SettingsPanel() {
     const portName = conn.midiInput?.portName ?? '';
     if (!portName) return;
     try {
-      const res = await bridge.invoke('tr:midi:openInputPort', { portName });
+      const res = await bridge.invoke('tr:midi:openInputPort', { portName, extraPorts: conn.midiInput?.extraPorts ?? [] });
       const status = res.ok ? 'ok' : 'error';
       setMidiInputStatus(status);
       if (status === 'ok') setConnectedProtocol('midiInput', true);
@@ -1612,6 +1700,8 @@ function SettingsPanel() {
         targetHost: conn.osc?.targetHost ?? '127.0.0.1',
         targetPort: conn.osc?.targetPort ?? 8000,
         listenPort: conn.osc?.listenPort ?? 9000,
+        outputs: conn.osc ? oscConfigOutputs(conn.osc) : [],
+        extraListenPorts: conn.osc?.extraListenPorts ?? [],
       });
       const status = res.ok ? 'ok' : 'error';
       setOscStatus(status);
@@ -1625,7 +1715,7 @@ function SettingsPanel() {
     const an = conn.artnet;
     if (!an?.targetHost) return;
     try {
-      const res = await bridge.invoke('tr:artnet:configure', { targetHost: an.targetHost });
+      const res = await bridge.invoke('tr:artnet:configure', { outputs: artnetConfigOutputs(an) });
       const status = res.ok ? 'ok' : 'error';
       setArtnetStatus(status);
       if (status === 'ok') setConnectedProtocol('artnet', true);
@@ -1638,9 +1728,8 @@ function SettingsPanel() {
     const sacn = conn.sacn;
     try {
       const res = await bridge.invoke('tr:sacn:configure', {
-        mode: sacn?.mode ?? 'multicast',
         priority: sacn?.priority ?? 100,
-        targetHost: sacn?.targetHost,
+        outputs: sacn ? sacnConfigOutputs(sacn) : [{ id: 'primary', host: undefined }],
       });
       const status = res.ok ? 'ok' : 'error';
       setSacnStatus(status);
@@ -1698,7 +1787,7 @@ function SettingsPanel() {
   return (
     <>
       <img src={logoUrl} alt="LiveForge" style={{ width: '100%', display: 'block', marginBottom: 6, objectFit: 'contain' }} />
-      <div style={{ textAlign: 'center', fontSize: 9, color: 'var(--color-text-dim)', marginBottom: 16, letterSpacing: 0.5 }}>developed by VENTO in 2026</div>
+      <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--color-text-dim)', marginBottom: 16, letterSpacing: 0.5 }}>developed by VENTO in 2026</div>
       <div style={styles.header}>Settings</div>
 
       <Section label="Project">
@@ -1709,7 +1798,7 @@ function SettingsPanel() {
       </Section>
 
       <Section label="Trigger">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 6 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 6 }}>
           Send current values of all controls across every page.
         </div>
         <ResetBtn onClick={() => {
@@ -1753,27 +1842,41 @@ function SettingsPanel() {
               ))}
             </select>
           </Field>
-          <Row>
-            <Field label="Width">
-              <NumInput value={page.width} onChange={(v) => setPageSize(page.id, Math.max(320, v), page.height)} />
-            </Field>
-            <Field label="Screen height">
-              <NumInput value={page.height + GLOBAL_BAR_HEIGHT} onChange={(v) => setPageSize(page.id, page.width, Math.max(240, v - GLOBAL_BAR_HEIGHT))} />
-            </Field>
-          </Row>
-          <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 2 }}>
+          <Field label="Width">
+            <NumInput value={page.width} onChange={(v) => setPageSize(page.id, Math.max(320, v), page.height)} />
+          </Field>
+          <Field label="Screen height">
+            <NumInput value={page.height + GLOBAL_BAR_HEIGHT} onChange={(v) => setPageSize(page.id, page.width, Math.max(240, v - GLOBAL_BAR_HEIGHT))} />
+          </Field>
+          <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 2, marginBottom: 10 }}>
             Enter your screen height — {GLOBAL_BAR_HEIGHT}px reserved for the top bar.
           </div>
-          <Row>
-            <Field label="Live X">
-              <NumInput value={page.liveOffsetX ?? 0} onChange={(v) => setPageLiveOffset(page.id, v, page.liveOffsetY ?? 0)} />
-            </Field>
-            <Field label="Live Y">
-              <NumInput value={page.liveOffsetY ?? 0} onChange={(v) => setPageLiveOffset(page.id, page.liveOffsetX ?? 0, v)} />
-            </Field>
-          </Row>
+          <Field label="Live X">
+            <NumInput value={page.liveOffsetX ?? 0} onChange={(v) => setPageLiveOffset(page.id, v, page.liveOffsetY ?? 0)} />
+          </Field>
+          <Field label="Live Y">
+            <NumInput value={page.liveOffsetY ?? 0} onChange={(v) => setPageLiveOffset(page.id, page.liveOffsetX ?? 0, v)} />
+          </Field>
         </CollapsibleSection>
       )}
+
+      <CollapsibleSection label="Frame rate">
+        <Field label="Frames per second">
+          <select style={styles.input} value={String(project.frameRate ?? 25)}
+            onChange={(e) => setProjectFrameRate(Number(e.target.value) as never)}>
+            <option value="24">24 fps</option>
+            <option value="25">25 fps</option>
+            <option value="29.97">29.97 fps</option>
+            <option value="30">30 fps</option>
+            <option value="50">50 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+        </Field>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', lineHeight: 1.5 }}>
+          Used by a Timeline ruler switched to FRM, unless that timeline carries
+          its own timecode frame rate.
+        </div>
+      </CollapsibleSection>
 
       <CollapsibleSection label="Tempo">
         <Field label="Tap source">
@@ -1792,7 +1895,7 @@ function SettingsPanel() {
           </Field>
         )}
         {tapMapping?.type === 'midi' && (
-          <Row>
+          <>
             <Field label="Channel">
               <NumInput
                 value={(tapMapping as MidiMapping).channel}
@@ -1803,10 +1906,10 @@ function SettingsPanel() {
                 value={(tapMapping as MidiMapping).number}
                 onChange={(v) => setTapTriggerMapping({ ...(tapMapping as MidiMapping), number: Math.max(0, Math.min(127, v)) })} />
             </Field>
-          </Row>
+          </>
         )}
         {tapMapping === null && (
-          <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 4 }}>
             Use ↺ TAP in the top bar.
           </div>
         )}
@@ -1827,7 +1930,7 @@ function SettingsPanel() {
           </Field>
         )}
         {resetMapping?.type === 'midi' && (
-          <Row>
+          <>
             <Field label="Channel">
               <NumInput
                 value={(resetMapping as MidiMapping).channel}
@@ -1838,7 +1941,7 @@ function SettingsPanel() {
                 value={(resetMapping as MidiMapping).number}
                 onChange={(v) => setResetTriggerMapping({ ...(resetMapping as MidiMapping), number: Math.max(0, Math.min(127, v)) })} />
             </Field>
-          </Row>
+          </>
         )}
       </CollapsibleSection>
 
@@ -1849,7 +1952,7 @@ function SettingsPanel() {
           <input style={styles.input}
             placeholder="e.g. loopMIDI port, hardware synth"
             value={conn.midi?.portName ?? ''}
-            onChange={(e) => { setMidiStatus('idle'); setConnection({ type: 'midi', portName: e.target.value, virtualPort: false }); }} />
+            onChange={(e) => { setMidiStatus('idle'); setConnection({ type: 'midi', portName: e.target.value, virtualPort: conn.midi?.virtualPort ?? false, extraOutputs: conn.midi?.extraOutputs }); }} />
         </Field>
         <button
           onClick={async () => {
@@ -1861,7 +1964,7 @@ function SettingsPanel() {
           List available ports
         </button>
         {midiPorts !== null && (
-          <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-dim)' }}>
+          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--color-text-dim)' }}>
             {midiPorts.length === 0
               ? 'No MIDI output ports found'
               : midiPorts.map((name, i) => (
@@ -1870,7 +1973,7 @@ function SettingsPanel() {
                     style={{ cursor: 'pointer', padding: '2px 4px', borderRadius: 3,
                       background: name === conn.midi?.portName ? 'var(--color-accent)' : 'transparent',
                       color: name === conn.midi?.portName ? '#fff' : 'inherit' }}
-                    onClick={() => { setMidiStatus('idle'); setConnection({ type: 'midi', portName: name, virtualPort: false }); }}
+                    onClick={() => { setMidiStatus('idle'); setConnection({ type: 'midi', portName: name, virtualPort: conn.midi?.virtualPort ?? false, extraOutputs: conn.midi?.extraOutputs }); }}
                   >
                     {name}
                   </div>
@@ -1878,6 +1981,8 @@ function SettingsPanel() {
             }
           </div>
         )}
+        <NamedOutputsEditor field="portName" outputs={conn.midi?.extraOutputs ?? []}
+          onChange={(rows) => { setMidiStatus('idle'); setConnection({ type: 'midi', portName: conn.midi?.portName ?? '', virtualPort: conn.midi?.virtualPort ?? false, extraOutputs: rows.map((r) => ({ id: r.id, name: r.name, portName: r.portName ?? '' })) }); }} />
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <ConnectBtn
             onClick={midiStatus === 'ok' ? disconnectMidi : connectMidi}
@@ -1897,7 +2002,7 @@ function SettingsPanel() {
           <input style={styles.input}
             placeholder="e.g. Launchpad"
             value={conn.midiInput?.portName ?? ''}
-            onChange={(e) => { setMidiInputStatus('idle'); setConnection({ type: 'midiInput', portName: e.target.value }); }} />
+            onChange={(e) => { setMidiInputStatus('idle'); setConnection({ type: 'midiInput', portName: e.target.value, extraPorts: conn.midiInput?.extraPorts }); }} />
         </Field>
         <button
           onClick={async () => {
@@ -1909,7 +2014,7 @@ function SettingsPanel() {
           List available ports
         </button>
         {midiInputPorts !== null && (
-          <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-dim)' }}>
+          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--color-text-dim)' }}>
             {midiInputPorts.length === 0
               ? 'No MIDI input ports found'
               : midiInputPorts.map((name, i) => (
@@ -1917,7 +2022,7 @@ function SettingsPanel() {
                     style={{ cursor: 'pointer', padding: '2px 4px', borderRadius: 1,
                       background: name === conn.midiInput?.portName ? 'var(--color-accent)' : 'transparent',
                       color: name === conn.midiInput?.portName ? '#000' : 'inherit' }}
-                    onClick={() => { setMidiInputStatus('idle'); setConnection({ type: 'midiInput', portName: name }); }}
+                    onClick={() => { setMidiInputStatus('idle'); setConnection({ type: 'midiInput', portName: name, extraPorts: conn.midiInput?.extraPorts }); }}
                   >
                     {name}
                   </div>
@@ -1925,6 +2030,9 @@ function SettingsPanel() {
             }
           </div>
         )}
+        <ExtraHostsEditor label="Extra input ports" placeholder="exact MIDI port name"
+          hosts={conn.midiInput?.extraPorts ?? []}
+          onChange={(ports) => { setMidiInputStatus('idle'); setConnection({ type: 'midiInput', portName: conn.midiInput?.portName ?? '', extraPorts: ports }); }} />
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <ConnectBtn
             onClick={midiInputStatus === 'ok' ? disconnectMidiInput : connectMidiInput}
@@ -1942,20 +2050,22 @@ function SettingsPanel() {
           <input style={styles.input}
             placeholder="e.g. 192.168.1.100"
             value={conn.osc?.targetHost ?? '127.0.0.1'}
-            onChange={(e) => { setOscStatus('idle'); setConnection({ type: 'osc', targetHost: e.target.value, targetPort: conn.osc?.targetPort ?? 8000, listenPort: conn.osc?.listenPort ?? 9000 }); }} />
+            onChange={(e) => { setOscStatus('idle'); setConnection({ type: 'osc', targetHost: e.target.value, targetPort: conn.osc?.targetPort ?? 8000, listenPort: conn.osc?.listenPort ?? 9000, extraOutputs: conn.osc?.extraOutputs, extraListenPorts: conn.osc?.extraListenPorts }); }} />
         </Field>
-        <Row>
-          <Field label="Destination port">
-            <input style={styles.input} type="number"
-              value={conn.osc?.targetPort ?? 8000}
-              onChange={(e) => { setOscStatus('idle'); setConnection({ type: 'osc', targetHost: conn.osc?.targetHost ?? '127.0.0.1', targetPort: Number(e.target.value), listenPort: conn.osc?.listenPort ?? 9000 }); }} />
-          </Field>
-          <Field label="Listen port">
-            <input style={styles.input} type="number"
-              value={conn.osc?.listenPort ?? 9000}
-              onChange={(e) => { setOscStatus('idle'); setConnection({ type: 'osc', targetHost: conn.osc?.targetHost ?? '127.0.0.1', targetPort: conn.osc?.targetPort ?? 8000, listenPort: Number(e.target.value) }); }} />
-          </Field>
-        </Row>
+        <Field label="Destination port">
+          <input style={styles.input} type="number"
+            value={conn.osc?.targetPort ?? 8000}
+            onChange={(e) => { setOscStatus('idle'); setConnection({ type: 'osc', targetHost: conn.osc?.targetHost ?? '127.0.0.1', targetPort: Number(e.target.value), listenPort: conn.osc?.listenPort ?? 9000, extraOutputs: conn.osc?.extraOutputs, extraListenPorts: conn.osc?.extraListenPorts }); }} />
+        </Field>
+        <Field label="Listen port">
+          <input style={styles.input} type="number"
+            value={conn.osc?.listenPort ?? 9000}
+            onChange={(e) => { setOscStatus('idle'); setConnection({ type: 'osc', targetHost: conn.osc?.targetHost ?? '127.0.0.1', targetPort: conn.osc?.targetPort ?? 8000, listenPort: Number(e.target.value), extraOutputs: conn.osc?.extraOutputs, extraListenPorts: conn.osc?.extraListenPorts }); }} />
+        </Field>
+        <NamedOutputsEditor field="hostPort" outputs={conn.osc?.extraOutputs ?? []}
+          onChange={(rows) => { setOscStatus('idle'); setConnection({ type: 'osc', targetHost: conn.osc?.targetHost ?? '127.0.0.1', targetPort: conn.osc?.targetPort ?? 8000, listenPort: conn.osc?.listenPort ?? 9000, extraOutputs: rows.map((r) => ({ id: r.id, name: r.name, host: r.host ?? '', port: r.port ?? 8000 })), extraListenPorts: conn.osc?.extraListenPorts }); }} />
+        <ExtraPortsEditor ports={conn.osc?.extraListenPorts ?? []}
+          onChange={(lp) => { setOscStatus('idle'); setConnection({ type: 'osc', targetHost: conn.osc?.targetHost ?? '127.0.0.1', targetPort: conn.osc?.targetPort ?? 8000, listenPort: conn.osc?.listenPort ?? 9000, extraOutputs: conn.osc?.extraOutputs, extraListenPorts: lp }); }} />
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <ConnectBtn onClick={oscStatus === 'ok' ? disconnectOsc : connectOsc} disconnect={oscStatus === 'ok'}>
             {oscStatus === 'ok' ? 'Disconnect OSC' : 'Connect OSC'}
@@ -1969,11 +2079,13 @@ function SettingsPanel() {
           <input style={styles.input}
             placeholder="255.255.255.255 = broadcast"
             value={conn.artnet?.targetHost ?? ''}
-            onChange={(e) => { setArtnetStatus('idle'); setConnection({ type: 'artnet', targetHost: e.target.value }); }} />
+            onChange={(e) => { setArtnetStatus('idle'); setConnection({ type: 'artnet', targetHost: e.target.value, extraOutputs: conn.artnet?.extraOutputs }); }} />
         </Field>
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 4 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 4 }}>
           Use 255.255.255.255 for LAN broadcast, or the receiver's IP for unicast.
         </div>
+        <NamedOutputsEditor field="host" outputs={conn.artnet?.extraOutputs ?? []}
+          onChange={(rows) => { setArtnetStatus('idle'); setConnection({ type: 'artnet', targetHost: conn.artnet?.targetHost ?? '', extraOutputs: rows.map((r) => ({ id: r.id, name: r.name, host: r.host ?? '' })) }); }} />
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <ConnectBtn onClick={artnetStatus === 'ok' ? disconnectArtnet : connectArtnet} disconnect={artnetStatus === 'ok'}>
             {artnetStatus === 'ok' ? 'Disconnect Art-Net' : 'Connect Art-Net'}
@@ -1986,26 +2098,30 @@ function SettingsPanel() {
         <Field label="Mode">
           <select style={styles.input}
             value={conn.sacn?.mode ?? 'multicast'}
-            onChange={(e) => { setSacnStatus('idle'); setConnection({ type: 'sacn', mode: e.target.value as 'multicast' | 'unicast', priority: conn.sacn?.priority ?? 100, targetHost: conn.sacn?.targetHost }); }}>
+            onChange={(e) => { setSacnStatus('idle'); setConnection({ type: 'sacn', mode: e.target.value as 'multicast' | 'unicast', priority: conn.sacn?.priority ?? 100, targetHost: conn.sacn?.targetHost, extraOutputs: conn.sacn?.extraOutputs }); }}>
             <option value="multicast">Multicast (automatic)</option>
             <option value="unicast">Unicast (specific IP)</option>
           </select>
         </Field>
         {(conn.sacn?.mode ?? 'multicast') === 'unicast' && (
-          <Field label="Destination IP">
-            <input style={styles.input}
-              placeholder="e.g. 192.168.1.50"
-              value={conn.sacn?.targetHost ?? ''}
-              onChange={(e) => { setSacnStatus('idle'); setConnection({ type: 'sacn', mode: 'unicast', priority: conn.sacn?.priority ?? 100, targetHost: e.target.value }); }} />
-          </Field>
+          <>
+            <Field label="Destination IP">
+              <input style={styles.input}
+                placeholder="e.g. 192.168.1.50"
+                value={conn.sacn?.targetHost ?? ''}
+                onChange={(e) => { setSacnStatus('idle'); setConnection({ type: 'sacn', mode: 'unicast', priority: conn.sacn?.priority ?? 100, targetHost: e.target.value, extraOutputs: conn.sacn?.extraOutputs }); }} />
+            </Field>
+            <NamedOutputsEditor field="host" outputs={conn.sacn?.extraOutputs ?? []}
+              onChange={(rows) => { setSacnStatus('idle'); setConnection({ type: 'sacn', mode: 'unicast', priority: conn.sacn?.priority ?? 100, targetHost: conn.sacn?.targetHost, extraOutputs: rows.map((r) => ({ id: r.id, name: r.name, host: r.host ?? '' })) }); }} />
+          </>
         )}
         <Field label="Priority (1–200)">
           <input style={styles.input} type="number" min={1} max={200}
             value={conn.sacn?.priority ?? 100}
-            onChange={(e) => { setSacnStatus('idle'); setConnection({ type: 'sacn', mode: conn.sacn?.mode ?? 'multicast', priority: Number(e.target.value), targetHost: conn.sacn?.targetHost }); }} />
+            onChange={(e) => { setSacnStatus('idle'); setConnection({ type: 'sacn', mode: conn.sacn?.mode ?? 'multicast', priority: Number(e.target.value), targetHost: conn.sacn?.targetHost, extraOutputs: conn.sacn?.extraOutputs }); }} />
         </Field>
         {(conn.sacn?.mode ?? 'multicast') === 'multicast' && (
-          <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 4 }}>
             Multicast: destination is computed automatically from the universe number.
           </div>
         )}
@@ -2018,7 +2134,7 @@ function SettingsPanel() {
       </CollapsibleSection>
 
       <CollapsibleSection label="Enttec Open DMX USB">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 6, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 6, lineHeight: 1.5 }}>
           Requires the FTDI D2XX driver. Device index is 0 for the first dongle.
         </div>
         <button
@@ -2035,11 +2151,11 @@ function SettingsPanel() {
         </button>
         {enttecDevices !== null && (
           enttecDevices.length === 0
-            ? <div style={{ fontSize: 11, color: 'var(--color-text-dim)', marginBottom: 6 }}>No FTDI devices found</div>
+            ? <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 6 }}>No FTDI devices found</div>
             : <div style={{ marginBottom: 6 }}>
                 {enttecDevices.map((d) => (
                   <div key={d.index}
-                    style={{ cursor: 'pointer', padding: '2px 4px', borderRadius: 3, fontSize: 11,
+                    style={{ cursor: 'pointer', padding: '2px 4px', borderRadius: 3, fontSize: 12,
                       background: d.index === (conn.enttecDmx?.deviceIndex ?? 0) ? 'var(--color-accent)' : 'transparent',
                       color: d.index === (conn.enttecDmx?.deviceIndex ?? 0) ? '#fff' : 'inherit' }}
                     onClick={() => { setEnttecStatus('idle'); setConnection({ type: 'enttecDmx', deviceIndex: d.index, deviceDescription: d.description }); }}
@@ -2056,7 +2172,7 @@ function SettingsPanel() {
           />
         </Field>
         {conn.enttecDmx?.deviceDescription && (
-          <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 2 }}>
+          <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 2 }}>
             {conn.enttecDmx.deviceDescription}
           </div>
         )}
@@ -2069,7 +2185,7 @@ function SettingsPanel() {
       </CollapsibleSection>
 
       <CollapsibleSection label="Audio Input">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 6, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 6, lineHeight: 1.5 }}>
           Select the audio input device. Used by Timeline widgets for timecode sync and future audio analysis features.
         </div>
         <button
@@ -2099,14 +2215,14 @@ function SettingsPanel() {
           </Field>
         )}
         {conn.ltcAudio?.deviceLabel && (
-          <div style={{ fontSize: 10, color: 'var(--color-accent)', marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: 'var(--color-accent)', marginTop: 4 }}>
             Selected: {conn.ltcAudio.deviceLabel}
           </div>
         )}
       </CollapsibleSection>
 
       <CollapsibleSection label="Audio Output">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 6, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 6, lineHeight: 1.5 }}>
           Select the audio output device for sound track playback.
         </div>
         <button
@@ -2136,7 +2252,7 @@ function SettingsPanel() {
           </Field>
         )}
         {conn.audioOutput?.deviceLabel && (
-          <div style={{ fontSize: 10, color: 'var(--color-accent)', marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: 'var(--color-accent)', marginTop: 4 }}>
             Selected: {conn.audioOutput.deviceLabel}
           </div>
         )}
@@ -2157,7 +2273,7 @@ function MidiClockSection() {
 
   return (
     <CollapsibleSection label="MIDI Clock">
-      <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
         Send MIDI clock ticks (24 PPQN) via the MIDI output port, synced to the master BPM.
         Requires an active MIDI output connection.
       </div>
@@ -2165,7 +2281,7 @@ function MidiClockSection() {
         <button
           onPointerDown={(e) => { e.preventDefault(); setMidiClockEnabled(!midiClockEnabled); }}
           style={{
-            height: 24, padding: '0 10px', fontSize: 11, fontFamily: 'inherit', cursor: 'pointer',
+            height: 24, padding: '0 10px', fontSize: 12, fontFamily: 'inherit', cursor: 'pointer',
             background: midiClockEnabled ? 'var(--color-accent)' : 'var(--color-surface-2)',
             border: `1px solid ${midiClockEnabled ? 'var(--color-accent)' : 'var(--color-border)'}`,
             color: midiClockEnabled ? '#000' : 'var(--color-text-dim)',
@@ -2235,47 +2351,45 @@ function NetworkLiveSection() {
 
   return (
     <CollapsibleSection label="Network Live">
-      <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
         Serve the live canvas over the local network. Connect from any phone or PC on the same WiFi.
       </div>
 
-      <Row>
-        <Field label="Port">
-          <input
-            style={styles.input}
-            value={portInput}
-            onChange={(e) => setPortInput(e.target.value)}
-            disabled={networkEnabled}
-          />
-        </Field>
-        <Field label="">
-          <button
-            onClick={handleToggle}
-            style={{
-              ...styles.input, cursor: 'pointer', fontWeight: 600,
-              background: networkEnabled ? '#1a2a1a' : 'var(--color-surface-2)',
-              color: networkEnabled ? '#00cc66' : 'var(--color-text)',
-              border: `1px solid ${networkEnabled ? '#00cc66' : 'var(--color-border)'}`,
-            }}
-          >
-            {status === 'starting' ? '…' : networkEnabled ? '● ON' : 'Start'}
-          </button>
-        </Field>
-      </Row>
+      <Field label="Port">
+        <input
+          style={styles.input}
+          value={portInput}
+          onChange={(e) => setPortInput(e.target.value)}
+          disabled={networkEnabled}
+        />
+      </Field>
+      <Field label="">
+        <button
+          onClick={handleToggle}
+          style={{
+            ...styles.input, cursor: 'pointer', fontWeight: 600, minHeight: 40,
+            background: networkEnabled ? '#1a2a1a' : 'var(--color-surface-2)',
+            color: networkEnabled ? '#00cc66' : 'var(--color-text)',
+            border: `1px solid ${networkEnabled ? '#00cc66' : 'var(--color-border)'}`,
+          }}
+        >
+          {status === 'starting' ? '…' : networkEnabled ? '● ON' : 'Start'}
+        </button>
+      </Field>
 
       {status === 'error' && (
-        <div style={{ fontSize: 10, color: '#cc3333', marginTop: 4 }}>
+        <div style={{ fontSize: 12, color: '#cc3333', marginTop: 4 }}>
           Failed to start — port may be in use.
         </div>
       )}
 
       {url && (
         <div style={{ marginTop: 8, padding: '8px', background: 'var(--color-surface)', border: '1px solid #00cc6640', borderRadius: 3 }}>
-          <div style={{ fontSize: 9, color: '#555', marginBottom: 4, letterSpacing: 1 }}>OPEN IN BROWSER</div>
+          <div style={{ fontSize: 11, color: '#555', marginBottom: 4, letterSpacing: 1 }}>OPEN IN BROWSER</div>
           <div style={{ fontSize: 12, color: '#00cc66', fontFamily: 'monospace', letterSpacing: 0.5 }}>
             {url}
           </div>
-          <div style={{ fontSize: 9, color: '#444', marginTop: 4 }}>
+          <div style={{ fontSize: 11, color: '#444', marginTop: 4 }}>
             If browser shows "not secure": tap Advanced → Proceed to continue (self-signed cert, one-time per device).
           </div>
         </div>
@@ -2347,10 +2461,10 @@ function SourceSelect({ value, onChange, endpoint }: {
         </button>
       </div>
       {error && (
-        <div style={{ fontSize: 10, color: '#e6a000', lineHeight: 1.4 }}>{error}</div>
+        <div style={{ fontSize: 12, color: '#e6a000', lineHeight: 1.4 }}>{error}</div>
       )}
       {!error && sources.length === 0 && !loading && (
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)' }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)' }}>
           No sources found — start a sender then click ↺
         </div>
       )}
@@ -2404,7 +2518,7 @@ function SpoutInputInspectorPanel({ widget, activePageId, updateWidget, updateWi
           <Field label="Max FPS">
             <NumInput value={widget.targetFps ?? 0} min={0} max={120} onChange={(v) => patch({ targetFps: v })} />
           </Field>
-          <Field label=""><span style={{ fontSize: 10, color: 'var(--color-text-dim)' }}>0 = no limit</span></Field>
+          <Field label=""><span style={{ fontSize: 12, color: 'var(--color-text-dim)' }}>0 = no limit</span></Field>
         </Row>
       </Section>
     </>
@@ -2440,7 +2554,7 @@ function NdiInputInspectorPanel({ widget, activePageId, updateWidget, updateWidg
         </Row>
       </Section>
       <Section label="NDI source">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 6, lineHeight: 1.4 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 6, lineHeight: 1.4 }}>
           NDI sources on the LAN. Requires NDI Runtime installed.
         </div>
         <SourceSelect value={widget.sourceName} onChange={(n) => patch({ sourceName: n })} endpoint="/ndi/sources" />
@@ -2460,7 +2574,7 @@ function NdiInputInspectorPanel({ widget, activePageId, updateWidget, updateWidg
           <Field label="Max FPS">
             <NumInput value={widget.targetFps ?? 0} onChange={(v) => patch({ targetFps: v })} />
           </Field>
-          <Field label=""><span style={{ fontSize: 10, color: 'var(--color-text-dim)' }}>0 = no limit</span></Field>
+          <Field label=""><span style={{ fontSize: 12, color: 'var(--color-text-dim)' }}>0 = no limit</span></Field>
         </Row>
       </Section>
     </>
@@ -2583,13 +2697,13 @@ function SubmastersInspectorPanel({ widget, activePageId, updateWidget, updateWi
           <option value="htp">HTP – Higher Takes Preference</option>
           <option value="ltp">LTP – Last Takes Preference</option>
         </select>
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginTop: 5, lineHeight: 1.4 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 5, lineHeight: 1.4 }}>
           HTP: max of all active scenes. LTP: last moved fader wins.
         </div>
       </Section>
 
       <Section label="Linked Widgets">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 8 }}>
           Widgets controlled by this submaster.
         </div>
         {widget.linkedWidgetIds.map((wid, i) => {
@@ -2617,7 +2731,7 @@ function SubmastersInspectorPanel({ widget, activePageId, updateWidget, updateWi
           onClick={handleAddLinked}
           disabled={pageWidgets.length === 0 || pageWidgets.every((w) => widget.linkedWidgetIds.includes(w.id))}
           style={{
-            width: '100%', marginTop: 4, padding: '4px 0', fontSize: 11,
+            width: '100%', marginTop: 4, padding: '4px 0', fontSize: 12,
             background: 'var(--color-surface-2)', border: '1px solid var(--color-border)',
             color: 'var(--color-text-dim)', borderRadius: 3, cursor: 'pointer',
           }}
@@ -2625,7 +2739,7 @@ function SubmastersInspectorPanel({ widget, activePageId, updateWidget, updateWi
       </Section>
 
       <Section label="Scene Config">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 8 }}>
           Label and color per scene button.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2633,7 +2747,7 @@ function SubmastersInspectorPanel({ widget, activePageId, updateWidget, updateWi
             const hasData = Object.keys(scene.snapshot).length > 0;
             return (
               <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                <span style={{ fontSize: 10, color: 'var(--color-text-dim)', width: 14, flexShrink: 0 }}>{i + 1}</span>
+                <span style={{ fontSize: 12, color: 'var(--color-text-dim)', width: 14, flexShrink: 0 }}>{i + 1}</span>
                 <input
                   style={{ ...styles.input, flex: 1 }}
                   value={scene.label}
@@ -2653,7 +2767,7 @@ function SubmastersInspectorPanel({ widget, activePageId, updateWidget, updateWi
                   >✕</button>
                 )}
                 {!hasData && (
-                  <span style={{ fontSize: 10, color: '#333', width: 16, flexShrink: 0, textAlign: 'center' }}>—</span>
+                  <span style={{ fontSize: 12, color: '#333', width: 16, flexShrink: 0, textAlign: 'center' }}>—</span>
                 )}
               </div>
             );
@@ -2705,9 +2819,9 @@ function BeatOutputMappingEditor({ label, mapping, onChange }: {
   const proto = mapping?.type ?? 'none';
   return (
     <div style={{ marginBottom: 6 }}>
-      <div style={{ fontSize: 9, color: '#555', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 11, color: '#555', marginBottom: 3 }}>{label}</div>
       <select
-        style={{ ...styles.input, fontSize: 10, marginBottom: proto !== 'none' ? 4 : 0 }}
+        style={{ ...styles.input, fontSize: 12, marginBottom: proto !== 'none' ? 4 : 0 }}
         value={proto}
         onChange={(e) => {
           const t = e.target.value;
@@ -2736,7 +2850,7 @@ function BeatOutputMappingEditor({ label, mapping, onChange }: {
         );
       })()}
       {mapping?.type === 'osc' && (
-        <input style={{ ...styles.input, fontSize: 10 }} placeholder="/address"
+        <input style={{ ...styles.input, fontSize: 12 }} placeholder="/address"
           value={(mapping as OscMapping).address}
           onChange={(e) => onChange({ ...(mapping as OscMapping), address: e.target.value })} />
       )}
@@ -2755,6 +2869,7 @@ function BeatOutputMappingEditor({ label, mapping, onChange }: {
           <Field label="Ch"><NumInput value={m.channel} onChange={(v) => onChange({ ...m, channel: Math.max(1, Math.min(512, v)) })} /></Field>
         );
       })()}
+      <OutputSelect mapping={mapping} onChange={onChange} />
     </div>
   );
 }
@@ -2795,7 +2910,7 @@ function AutoBpmInspectorPanel({ widget, activePageId, updateWidget, updateWidge
       </Section>
 
       <Section label="Beat Outputs">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
           Each divisor has a trigger (0→1→0 pulse) and a ramp (0→1 sawtooth).
         </div>
         {BEAT_DIVISORS.map((D, i) => {
@@ -2811,11 +2926,11 @@ function AutoBpmInspectorPanel({ widget, activePageId, updateWidget, updateWidge
                   border: `1px solid ${isOpen ? 'var(--color-border)' : 'transparent'}`,
                   borderRadius: 3, padding: '4px 8px', cursor: 'pointer',
                   color: hasMapping ? 'var(--color-text)' : 'var(--color-text-dim)',
-                  fontSize: 11, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 }}
               >
                 <span>x{D} {D === 1 ? '(every beat)' : D === 3 ? '(triplet bar)' : `(${D} beats)`}</span>
-                <span style={{ fontSize: 9, color: hasMapping ? '#00cc66' : '#333' }}>
+                <span style={{ fontSize: 11, color: hasMapping ? '#00cc66' : '#333' }}>
                   {hasMapping ? '●' : '○'} {isOpen ? '▲' : '▼'}
                 </span>
               </button>
@@ -2891,7 +3006,7 @@ function RouterOutputEditor({ output, onChange, onRemove }: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-        <select style={{ ...styles.input, flex: 1, fontSize: 10 }} value={mode} onChange={(e) => handleModeChange(e.target.value)}>
+        <select style={{ ...styles.input, flex: 1, fontSize: 12 }} value={mode} onChange={(e) => handleModeChange(e.target.value)}>
           <option value="">— output type —</option>
           <option value="widget">Widget Cell</option>
           <option value="midi">MIDI</option>
@@ -2900,12 +3015,12 @@ function RouterOutputEditor({ output, onChange, onRemove }: {
           <option value="artnet">Art-Net</option>
           <option value="sacn">sACN / E1.31</option>
         </select>
-        <button onClick={onRemove} style={{ background: 'none', border: '1px solid #333', color: '#555', cursor: 'pointer', borderRadius: 2, padding: '2px 6px', fontSize: 11, flexShrink: 0 }}>✕</button>
+        <button onClick={onRemove} style={{ background: 'none', border: '1px solid #333', color: '#555', cursor: 'pointer', borderRadius: 2, padding: '2px 6px', fontSize: 12, flexShrink: 0 }}>✕</button>
       </div>
       {mode === 'widget' && (
         <div style={{ display: 'flex', gap: 4 }}>
           <select
-            style={{ ...styles.input, flex: 2, fontSize: 10 }}
+            style={{ ...styles.input, flex: 2, fontSize: 12 }}
             value={output.targetWidgetId ?? ''}
             onChange={(e) => onChange({ targetWidgetId: e.target.value, targetCellIndex: 0 })}
           >
@@ -2913,16 +3028,26 @@ function RouterOutputEditor({ output, onChange, onRemove }: {
             {targetWidgets.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
           </select>
           <select
-            style={{ ...styles.input, flex: 1, fontSize: 10 }}
-            value={output.targetCellIndex ?? 0}
+            style={{ ...styles.input, flex: 1, fontSize: 12 }}
+            value={output.targetAllCells ? 'all' : String(output.targetCellIndex ?? 0)}
             disabled={!targetWidget}
-            onChange={(e) => onChange({ targetCellIndex: Number(e.target.value) })}
+            onChange={(e) => onChange(e.target.value === 'all'
+              ? { targetAllCells: true }
+              : { targetAllCells: false, targetCellIndex: Number(e.target.value) })}
           >
+            {/* One output for the whole widget, instead of one per cell. */}
+            <option value="all">✳ ALL cells</option>
+            <option disabled>──────────</option>
             {getTargetCells(output.targetWidgetId ?? '').map((c) => (
               <option key={c.index} value={c.index}>{c.label}</option>
             ))}
             {!targetWidget && <option value={0}>—</option>}
           </select>
+        </div>
+      )}
+      {mode === 'widget' && output.targetAllCells && targetWidget && (
+        <div style={{ fontSize: 11, color: 'var(--color-text-dim)' }}>
+          Drives all {getTargetCells(output.targetWidgetId ?? '').length} cells of {targetWidget.label} together.
         </div>
       )}
       {output.mapping?.type === 'midi' && (() => {
@@ -2944,7 +3069,7 @@ function RouterOutputEditor({ output, onChange, onRemove }: {
         const m = output.mapping as OscMapping;
         return (
           <>
-            <input style={{ ...styles.input, fontSize: 10 }} placeholder="/address"
+            <input style={{ ...styles.input, fontSize: 12 }} placeholder="/address"
               value={m.address}
               onChange={(e) => pm({ address: e.target.value })} />
             <Row>
@@ -2983,6 +3108,19 @@ function RouterOutputEditor({ output, onChange, onRemove }: {
           </>
         );
       })()}
+      <OutputSelect mapping={output.mapping ?? null} onChange={(m) => pm({ outputId: (m as { outputId?: string }).outputId })} />
+
+      {/* Per-output travel: the same source can drive each output over a
+          different span, or over an inverted one. */}
+      <div style={{ fontSize: 11, color: 'var(--color-text-dim)', marginTop: 4 }}>Range</div>
+      <Row>
+        <Field label="In min"><NumInput value={output.inMin ?? 0} step={0.01} onChange={(v) => onChange({ inMin: v })} /></Field>
+        <Field label="In max"><NumInput value={output.inMax ?? 1} step={0.01} onChange={(v) => onChange({ inMax: v })} /></Field>
+      </Row>
+      <Row>
+        <Field label="Out min"><NumInput value={output.outMin ?? 0} step={0.01} onChange={(v) => onChange({ outMin: v })} /></Field>
+        <Field label="Out max"><NumInput value={output.outMax ?? 1} step={0.01} onChange={(v) => onChange({ outMax: v })} /></Field>
+      </Row>
     </div>
   );
 }
@@ -3064,7 +3202,7 @@ function RouterInspectorPanel({ widget, activePageId, updateWidget, updateWidget
 
   const rowBtnStyle: React.CSSProperties = {
     background: 'none', border: '1px dashed #333', color: '#555', cursor: 'pointer',
-    fontSize: 10, borderRadius: 2, padding: '3px 8px',
+    fontSize: 12, borderRadius: 2, padding: '3px 8px',
   };
 
   return (
@@ -3095,7 +3233,7 @@ function RouterInspectorPanel({ widget, activePageId, updateWidget, updateWidget
       </Section>
 
       <Section label="Routes">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
           Each route reads one widget cell and forwards its value (0–1) to all listed outputs.
         </div>
 
@@ -3106,9 +3244,9 @@ function RouterInspectorPanel({ widget, activePageId, updateWidget, updateWidget
             <div key={row.id} style={{ marginBottom: 12 }}>
               {/* Source type selector */}
               <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ fontSize: 10, color: '#505050', width: 18, flexShrink: 0, textAlign: 'right' }}>{rowIdx + 1}</span>
+                <span style={{ fontSize: 12, color: '#505050', width: 18, flexShrink: 0, textAlign: 'right' }}>{rowIdx + 1}</span>
                 <select
-                  style={{ ...styles.input, flex: 1, fontSize: 11 }}
+                  style={{ ...styles.input, flex: 1, fontSize: 12 }}
                   value={inputType}
                   onChange={(e) => updateRow(row.id, { inputType: e.target.value as RouterInputType, widgetId: '', cellIndex: 0 })}
                 >
@@ -3127,7 +3265,7 @@ function RouterInspectorPanel({ widget, activePageId, updateWidget, updateWidget
               {inputType === 'widget' && (
                 <div style={{ display: 'flex', gap: 4, marginBottom: 4, marginLeft: 22 }}>
                   <select
-                    style={{ ...styles.input, flex: 2, fontSize: 11 }}
+                    style={{ ...styles.input, flex: 2, fontSize: 12 }}
                     value={row.widgetId}
                     onChange={(e) => updateRow(row.id, { widgetId: e.target.value, cellIndex: 0 })}
                   >
@@ -3137,16 +3275,26 @@ function RouterInspectorPanel({ widget, activePageId, updateWidget, updateWidget
                     ))}
                   </select>
                   <select
-                    style={{ ...styles.input, flex: 1, fontSize: 11 }}
-                    value={row.cellIndex}
-                    onChange={(e) => updateRow(row.id, { cellIndex: Number(e.target.value) })}
+                    style={{ ...styles.input, flex: 1, fontSize: 12 }}
+                    value={row.allCells ? 'all' : String(row.cellIndex)}
+                    onChange={(e) => updateRow(row.id, e.target.value === 'all'
+                      ? { allCells: true }
+                      : { allCells: false, cellIndex: Number(e.target.value) })}
                     disabled={cells.length === 0}
                   >
+                    <option value="all">✳ ALL cells</option>
+                    <option disabled>──────────</option>
                     {cells.length === 0
                       ? <option value={0}>—</option>
                       : cells.map((c) => <option key={c.index} value={c.index}>{c.label}</option>)
                     }
                   </select>
+                </div>
+              )}
+              {inputType === 'widget' && row.allCells && (
+                <div style={{ fontSize: 11, color: 'var(--color-text-dim)', marginLeft: 22, marginBottom: 4 }}>
+                  Every cell is its own signal. With an ALL output the banks mirror
+                  one another cell by cell; other outputs follow the first cell only.
                 </div>
               )}
               {(inputType === 'midiCC' || inputType === 'midiNote') && (
@@ -3170,7 +3318,7 @@ function RouterInspectorPanel({ widget, activePageId, updateWidget, updateWidget
               {inputType === 'osc' && (
                 <div style={{ marginBottom: 4, marginLeft: 22 }}>
                   <input
-                    style={{ ...styles.input, fontSize: 11 }}
+                    style={{ ...styles.input, fontSize: 12 }}
                     placeholder="/address"
                     value={row.oscAddress ?? ''}
                     onChange={(e) => updateRow(row.id, { oscAddress: e.target.value })}
@@ -3261,7 +3409,7 @@ function AudioAnalyserInspectorPanel({ widget, activePageId, updateWidget, updat
       </Section>
 
       <Section label="BPM Outputs">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
           Each divisor has a trigger (pulse) and a ramp (0→1 sawtooth).
         </div>
         {BEAT_DIVISORS.map((D, i) => {
@@ -3277,11 +3425,11 @@ function AudioAnalyserInspectorPanel({ widget, activePageId, updateWidget, updat
                   border: `1px solid ${isOpen ? 'var(--color-border)' : 'transparent'}`,
                   borderRadius: 3, padding: '4px 8px', cursor: 'pointer',
                   color: hasMapping ? 'var(--color-text)' : 'var(--color-text-dim)',
-                  fontSize: 11, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 }}
               >
                 <span>×{D} {D === 1 ? '(every beat)' : D === 3 ? '(triplet bar)' : `(${D} beats)`}</span>
-                <span style={{ fontSize: 9, color: hasMapping ? '#00cc66' : '#333' }}>
+                <span style={{ fontSize: 11, color: hasMapping ? '#00cc66' : '#333' }}>
                   {hasMapping ? '●' : '○'} {isOpen ? '▲' : '▼'}
                 </span>
               </button>
@@ -3448,7 +3596,7 @@ function SoundPlayerInspectorPanel({ widget, activePageId, updateWidget, updateW
       </Section>
 
       <Section label="Tracks">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 8 }}>
           Tracks are triggerable via Router (cell index = track index).
         </div>
         {widget.tracks.map((track, i) => (
@@ -3457,15 +3605,15 @@ function SoundPlayerInspectorPanel({ widget, activePageId, updateWidget, updateW
             background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 3,
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <span style={{ fontSize: 10, color: '#666' }}>#{i + 1}</span>
+              <span style={{ fontSize: 12, color: '#666' }}>#{i + 1}</span>
               <div style={{ display: 'flex', gap: 4 }}>
                 {i > 0 && (
                   <button onClick={() => moveTrack(i, i - 1)}
-                    style={{ background: 'none', border: '1px solid #333', color: '#555', cursor: 'pointer', fontSize: 10, padding: '1px 5px', borderRadius: 2 }}>▲</button>
+                    style={{ background: 'none', border: '1px solid #333', color: '#555', cursor: 'pointer', fontSize: 12, padding: '1px 5px', borderRadius: 2 }}>▲</button>
                 )}
                 {i < widget.tracks.length - 1 && (
                   <button onClick={() => moveTrack(i, i + 1)}
-                    style={{ background: 'none', border: '1px solid #333', color: '#555', cursor: 'pointer', fontSize: 10, padding: '1px 5px', borderRadius: 2 }}>▼</button>
+                    style={{ background: 'none', border: '1px solid #333', color: '#555', cursor: 'pointer', fontSize: 12, padding: '1px 5px', borderRadius: 2 }}>▼</button>
                 )}
                 <button onClick={() => removeTrack(track.id)}
                   style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: 14, padding: '0 2px' }}>✕</button>
@@ -3473,7 +3621,7 @@ function SoundPlayerInspectorPanel({ widget, activePageId, updateWidget, updateW
             </div>
 
             <div style={{ marginBottom: 4 }}>
-              <div style={{ fontSize: 9, color: '#555', marginBottom: 2 }}>Label</div>
+              <div style={{ fontSize: 11, color: '#555', marginBottom: 2 }}>Label</div>
               <input style={styles.input} value={track.label}
                 onChange={(e) => updateTrack(track.id, { label: e.target.value })} />
             </div>
@@ -3481,12 +3629,12 @@ function SoundPlayerInspectorPanel({ widget, activePageId, updateWidget, updateW
             <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
               <button
                 onClick={() => loadFile(track.id)}
-                style={{ background: '#1a1a1a', border: '1px solid #333', color: '#aaa', cursor: 'pointer', fontSize: 10, padding: '3px 8px', borderRadius: 2 }}
+                style={{ background: '#1a1a1a', border: '1px solid #333', color: '#aaa', cursor: 'pointer', fontSize: 12, padding: '3px 8px', borderRadius: 2 }}
               >
                 {track.fileName ? '🔄 Change file' : '📂 Load file'}
               </button>
               {track.fileName && (
-                <span style={{ fontSize: 9, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                <span style={{ fontSize: 11, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                   {track.fileName}
                 </span>
               )}
@@ -3500,7 +3648,7 @@ function SoundPlayerInspectorPanel({ widget, activePageId, updateWidget, updateW
             </Row>
 
             <div style={{ marginTop: 6 }}>
-              <div style={{ fontSize: 9, color: '#555', marginBottom: 3 }}>Play trigger mapping</div>
+              <div style={{ fontSize: 11, color: '#555', marginBottom: 3 }}>Play trigger mapping</div>
               <BeatOutputMappingEditor
                 label=""
                 mapping={track.playMapping}
@@ -3511,7 +3659,7 @@ function SoundPlayerInspectorPanel({ widget, activePageId, updateWidget, updateW
         ))}
         <button
           onClick={addTrack}
-          style={{ width: '100%', background: 'none', border: '1px dashed #333', color: '#555', cursor: 'pointer', fontSize: 10, borderRadius: 2, padding: '5px' }}
+          style={{ width: '100%', background: 'none', border: '1px dashed #333', color: '#555', cursor: 'pointer', fontSize: 12, borderRadius: 2, padding: '5px' }}
         >
           + add track
         </button>
@@ -3540,7 +3688,7 @@ function NoSelectionPanel() {
   return (
     <>
       <img src={logoUrl} alt="LiveForge" style={{ width: '100%', display: 'block', marginBottom: 6, objectFit: 'contain' }} />
-      <div style={{ textAlign: 'center', fontSize: 9, color: 'var(--color-text-dim)', marginBottom: 16, letterSpacing: 0.5 }}>developed by VENTO in 2026</div>
+      <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--color-text-dim)', marginBottom: 16, letterSpacing: 0.5 }}>developed by VENTO in 2026</div>
       <div style={styles.header}>Project</div>
 
       <Section label="Name">
@@ -3552,7 +3700,7 @@ function NoSelectionPanel() {
       </Section>
 
       <Section label="Connections">
-        <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 6 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 6 }}>
           Open ⚙ to configure
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -3574,7 +3722,7 @@ function ConnBadge({ label, status }: { label: string; status: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
       <span style={{ fontSize: 12, color: 'var(--color-text)' }}>{label}</span>
-      <span style={{ fontSize: 10, color: 'var(--color-text-dim)', fontStyle: 'italic' }}>{status}</span>
+      <span style={{ fontSize: 12, color: 'var(--color-text-dim)', fontStyle: 'italic' }}>{status}</span>
     </div>
   );
 }
@@ -3661,7 +3809,7 @@ function FrameSection({ style, patchStyle }: { style: WidgetStyle; patchStyle: (
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 18 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-dim)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-dim)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
         {label}
       </div>
       {children}
@@ -3676,42 +3824,179 @@ function CollapsibleSection({ label, children, defaultOpen = false }: {
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ marginBottom: open ? 18 : 8 }}>
+    <div style={{ marginBottom: open ? 18 : 10 }}>
       <div
         style={{
-          fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase',
+          fontSize: 13, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase',
           color: 'var(--color-text-dim)', cursor: 'pointer', userSelect: 'none',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          marginBottom: open ? 8 : 0,
+          // These collapsed headers are how you reach OSC / MIDI / Art-Net on a
+          // touchscreen. A bare text line is far too small to hit reliably, so
+          // give each one a full-height button-shaped target.
+          minHeight: 44, padding: '0 10px', boxSizing: 'border-box',
+          background: 'var(--color-surface-2)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 'var(--radius-sm)',
+          touchAction: 'manipulation',
+          marginBottom: open ? 10 : 0,
         }}
         onClick={() => setOpen((v) => !v)}
       >
         <span>{label}</span>
-        <span style={{ fontSize: 9, opacity: 0.6 }}>{open ? '▲' : '▼'}</span>
+        <span style={{ fontSize: 12, opacity: 0.6 }}>{open ? '▲' : '▼'}</span>
       </div>
       {open && children}
     </div>
   );
 }
 
+// Side-by-side fields. Spacing lives on Field so that dropping the Row wrapper
+// stacks the same fields one per line without losing it.
 function Row({ children }: { children: React.ReactNode }) {
-  return <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>{children}</div>;
+  return <div style={{ display: 'flex', gap: 8 }}>{children}</div>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ flex: 1 }}>
-      <div style={{ fontSize: 10, color: 'var(--color-text-dim)', marginBottom: 3 }}>{label}</div>
+    <div style={{ flex: 1, marginBottom: 10 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 5 }}>{label}</div>
       {children}
     </div>
   );
 }
 
-function NumInput({ value, onChange, min, max, step }: { value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number }) {
+// Editor for additional target IPs on a protocol — the same signal is also sent
+// to each of these machines. Empty rows are ignored when the connection is used.
+function ExtraHostsEditor({ hosts, onChange, placeholder, label }: {
+  hosts: string[];
+  onChange: (hosts: string[]) => void;
+  placeholder?: string;
+  label?: string;
+}) {
   return (
-    <input type="number" style={styles.input} value={value} min={min} max={max} step={step}
-      onChange={(e) => onChange(Number(e.target.value))} />
+    <div style={{ marginTop: 6 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 5 }}>{label ?? 'Extra target IPs'}</div>
+      {hosts.map((h, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+          <input style={{ ...styles.input, flex: 1 }}
+            placeholder={placeholder ?? 'e.g. 192.168.1.101'}
+            value={h}
+            onChange={(e) => { const next = hosts.slice(); next[i] = e.target.value; onChange(next); }} />
+          <button
+            onClick={() => onChange(hosts.filter((_, j) => j !== i))}
+            title="Remove this IP"
+            style={{ width: 40, minHeight: 40, flexShrink: 0, fontSize: 16, background: 'var(--color-surface)',
+                     color: 'var(--color-text-dim)', border: '1px solid var(--color-border)',
+                     borderRadius: 'var(--radius-sm)', cursor: 'pointer' }}>−</button>
+        </div>
+      ))}
+      <button
+        onClick={() => onChange([...hosts, ''])}
+        style={{ ...styles.input, minHeight: 40, cursor: 'pointer', background: 'var(--color-surface)',
+                 color: 'var(--color-text)' }}>+ IP</button>
+    </div>
   );
+}
+
+// Editor for additional NAMED, individually-addressable outputs. Each row has a
+// name (used by the per-mapping Output selector) plus the destination field(s):
+//  · 'host'     → Art-Net / sACN (IP only)
+//  · 'hostPort' → OSC (IP + port)
+//  · 'portName' → MIDI (port name)
+type OutRow = { id: string; name: string; host?: string; port?: number; portName?: string };
+function NamedOutputsEditor({ outputs, onChange, field }: {
+  outputs: OutRow[];
+  onChange: (outputs: OutRow[]) => void;
+  field: 'host' | 'hostPort' | 'portName';
+}) {
+  const patch = (i: number, p: Partial<OutRow>) => { const next = outputs.slice(); next[i] = { ...next[i], ...p }; onChange(next); };
+  const add = () => onChange([...outputs, {
+    id: crypto.randomUUID(),
+    name: `out ${outputs.length + 2}`,
+    ...(field === 'portName' ? { portName: '' } : { host: '' }),
+    ...(field === 'hostPort' ? { port: 8000 } : {}),
+  }]);
+  // One field per line: squeezing name + IP + port onto a single row left the IP
+  // box too narrow to read an address back.
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 5 }}>Extra outputs (named)</div>
+      {outputs.map((o, i) => (
+        <div key={o.id} style={{
+          border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)',
+          padding: 10, marginBottom: 8,
+        }}>
+          <Field label="Name">
+            <input style={styles.input} placeholder="name"
+              value={o.name}
+              onChange={(e) => patch(i, { name: e.target.value })} />
+          </Field>
+          {field === 'portName' ? (
+            <Field label="MIDI port name">
+              <input style={styles.input} placeholder="exact MIDI port name"
+                value={o.portName ?? ''}
+                onChange={(e) => patch(i, { portName: e.target.value })} />
+            </Field>
+          ) : (
+            <Field label="Destination IP">
+              <input style={styles.input} placeholder="e.g. 192.168.1.101"
+                value={o.host ?? ''}
+                onChange={(e) => patch(i, { host: e.target.value })} />
+            </Field>
+          )}
+          {field === 'hostPort' && (
+            <Field label="Port">
+              <input style={styles.input} type="number" placeholder="port"
+                value={o.port ?? 8000}
+                onChange={(e) => patch(i, { port: Number(e.target.value) })} />
+            </Field>
+          )}
+          <button
+            onClick={() => onChange(outputs.filter((_, j) => j !== i))}
+            style={{ ...styles.input, minHeight: 40, cursor: 'pointer', background: 'var(--color-surface)',
+                     color: 'var(--color-text-dim)' }}>− Remove output</button>
+        </div>
+      ))}
+      <button
+        onClick={add}
+        style={{ ...styles.input, minHeight: 40, cursor: 'pointer', background: 'var(--color-surface)',
+                 color: 'var(--color-text)' }}>+ output</button>
+    </div>
+  );
+}
+
+// Numeric variant of ExtraHostsEditor — for additional local listen ports.
+function ExtraPortsEditor({ ports, onChange, label }: {
+  ports: number[];
+  onChange: (ports: number[]) => void;
+  label?: string;
+}) {
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 5 }}>{label ?? 'Extra listen ports'}</div>
+      {ports.map((p, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+          <input style={{ ...styles.input, flex: 1 }} type="number" placeholder="e.g. 9001"
+            value={p}
+            onChange={(e) => { const next = ports.slice(); next[i] = Number(e.target.value); onChange(next); }} />
+          <button
+            onClick={() => onChange(ports.filter((_, j) => j !== i))}
+            title="Remove this port"
+            style={{ width: 40, minHeight: 40, flexShrink: 0, fontSize: 16, background: 'var(--color-surface)',
+                     color: 'var(--color-text-dim)', border: '1px solid var(--color-border)',
+                     borderRadius: 'var(--radius-sm)', cursor: 'pointer' }}>−</button>
+        </div>
+      ))}
+      <button
+        onClick={() => onChange([...ports, 0])}
+        style={{ ...styles.input, minHeight: 40, cursor: 'pointer', background: 'var(--color-surface)',
+                 color: 'var(--color-text)' }}>+ port</button>
+    </div>
+  );
+}
+
+function NumInput({ value, onChange, min, max, step }: { value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number }) {
+  return <NumberInput value={value} onChange={onChange} min={min} max={max} step={step} style={styles.input} />;
 }
 
 function ColorInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -3847,7 +4132,7 @@ function MasterLevelInspectorPanel({ widget, activePageId, updateWidget, updateW
           <option value="artnet">Art-Net (DMX)</option>
           <option value="sacn">sACN / E1.31 (DMX)</option>
         </select>
-        <div style={{ fontSize: 11, color: 'var(--color-text-dim)', marginTop: 6 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 6 }}>
           Multiplies every value sent on this protocol (0 = silence, 100% = full).
         </div>
       </Section>
@@ -3860,6 +4145,216 @@ function MasterLevelInspectorPanel({ widget, activePageId, updateWidget, updateW
           <option value="vertical">Vertical</option>
           <option value="horizontal">Horizontal</option>
         </select>
+      </Section>
+    </>
+  );
+}
+
+// ─── Keyboard Inspector Panel ─────────────────────────────────────────────────
+
+function KeyboardInspectorPanel({ widget, activePageId, updateWidget, updateWidgetRect }: {
+  widget: import('../../../../shared/types/project').KeyboardWidget;
+  activePageId: string;
+  updateWidget: StoreState['updateWidget'];
+  updateWidgetRect: StoreState['updateWidgetRect'];
+}) {
+  type KeyBinding = import('../../../../shared/types/project').KeyBinding;
+  const [capturing, setCapturing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function patch(partial: Partial<import('../../../../shared/types/project').KeyboardWidget>) {
+    updateWidget(activePageId, widget.id, partial as never);
+  }
+  function patchKey(i: number, p: Partial<KeyBinding>) {
+    patch({ keys: widget.keys.map((k, j) => (j === i ? { ...k, ...p } : k)) });
+  }
+
+  // Capture the next physical key. Listening on the window (capture phase) is
+  // what lets us grab keys the focused control would otherwise swallow.
+  useEffect(() => {
+    if (!capturing) return;
+    function onKey(e: KeyboardEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code === 'Escape') { setCapturing(false); return; }
+      if (RESERVED_CODES.has(e.code)) {
+        setError(`${e.code} is used by the app — pick another key`);
+        setCapturing(false);
+        return;
+      }
+      if (widget.keys.some((k) => k.code === e.code)) {
+        setError(`${keyCapLabel(e.code)} is already bound`);
+        setCapturing(false);
+        return;
+      }
+      const base = nextFreeCc(useStore.getState().project.pages.flatMap((p) => p.widgets));
+      const nk: KeyBinding = {
+        id: crypto.randomUUID(),
+        code: e.code,
+        label: keyCapLabel(e.code),
+        behavior: 'momentary',
+        onValue: 127,
+        offValue: 0,
+        mapping: { type: 'midi', messageType: 'controlChange', channel: 1, number: base % 128, minValue: 0, maxValue: 127 },
+        feedbackRules: [],
+      };
+      setError(null);
+      setCapturing(false);
+      patch({ keys: [...widget.keys, nk] });
+    }
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [capturing, widget.keys]);
+
+  return (
+    <>
+      <div style={styles.header}>Keyboard</div>
+      <Section label="Label">
+        <input style={styles.input} value={widget.label} onChange={(e) => patch({ label: e.target.value })} />
+      </Section>
+      <Section label="Position">
+        <Row>
+          <Field label="X"><NumInput value={widget.rect.x} onChange={(v) => updateWidgetRect(activePageId, widget.id, { x: v })} /></Field>
+          <Field label="Y"><NumInput value={widget.rect.y} onChange={(v) => updateWidgetRect(activePageId, widget.id, { y: v })} /></Field>
+        </Row>
+        <Row>
+          <Field label="W"><NumInput value={widget.rect.width} onChange={(v) => updateWidgetRect(activePageId, widget.id, { width: v })} /></Field>
+          <Field label="H"><NumInput value={widget.rect.height} onChange={(v) => updateWidgetRect(activePageId, widget.id, { height: v })} /></Field>
+        </Row>
+      </Section>
+
+      <Section label="Layout">
+        <Field label="Keys per row"><NumInput value={widget.countX} min={1} max={16}
+          onChange={(v) => patch({ countX: Math.max(1, Math.min(16, v)) })} /></Field>
+        <Row>
+          <Field label="Gap X"><NumInput value={widget.spacingX} onChange={(v) => patch({ spacingX: Math.max(0, v) })} /></Field>
+          <Field label="Gap Y"><NumInput value={widget.spacingY} onChange={(v) => patch({ spacingY: Math.max(0, v) })} /></Field>
+        </Row>
+      </Section>
+
+      <Section label={`Keys (${widget.keys.length})`}>
+        <button
+          onClick={() => { setError(null); setCapturing((v) => !v); }}
+          style={{
+            ...styles.input, minHeight: 44, cursor: 'pointer', fontWeight: 700,
+            background: capturing ? '#3a2a1a' : 'var(--color-surface-2)',
+            color: capturing ? '#ff9d3a' : 'var(--color-text)',
+            border: `1px solid ${capturing ? '#ff9d3a' : 'var(--color-border)'}`,
+          }}
+        >
+          {capturing ? '⬤ press a key…  (Esc cancels)' : '＋ Add key'}
+        </button>
+        {error && <div style={{ fontSize: 12, color: '#cc5555', marginTop: 6 }}>{error}</div>}
+
+        <div style={{ marginTop: 10 }}>
+          {widget.keys.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--color-text-dim)' }}>
+              No keys yet. Add one, then right-click it in Live mode to link it.
+            </div>
+          )}
+          {widget.keys.map((k, i) => (
+            <div key={k.id} style={{
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)',
+              padding: 10, marginBottom: 8,
+            }}>
+              <div style={{
+                fontSize: 15, fontWeight: 700, fontFamily: 'monospace',
+                color: 'var(--color-accent)', marginBottom: 8,
+              }}>
+                ⌨ {keyCapLabel(k.code)}
+                <span style={{ fontSize: 12, color: 'var(--color-text-dim)', fontWeight: 400 }}>  · {k.code}</span>
+              </div>
+              <Field label="Name">
+                <input style={styles.input} value={k.label}
+                  onChange={(e) => patchKey(i, { label: e.target.value })} />
+              </Field>
+              <Field label="Behavior">
+                <select style={styles.input} value={k.behavior ?? 'momentary'}
+                  onChange={(e) => patchKey(i, { behavior: e.target.value as import('../../../../shared/types/project').ButtonBehavior })}>
+                  <option value="momentary">Momentary — 1 while held</option>
+                  <option value="pulse">Pulse — short trig</option>
+                  <option value="toggle">Toggle — press flips</option>
+                  <option value="radio">Radio — one at a time</option>
+                </select>
+              </Field>
+              <Row>
+                <Field label="On value"><NumInput value={k.onValue ?? 127} min={0} max={127}
+                  onChange={(v) => patchKey(i, { onValue: v })} /></Field>
+                <Field label="Off value"><NumInput value={k.offValue ?? 0} min={0} max={127}
+                  onChange={(v) => patchKey(i, { offValue: v })} /></Field>
+              </Row>
+              <Field label="Colour">
+                <ColorInput value={k.color ?? widget.style.foregroundColor}
+                  onChange={(v) => patchKey(i, { color: v })} />
+              </Field>
+              <MappingEditor
+                mapping={k.mapping}
+                onChange={(m) => patchKey(i, { mapping: m })}
+              />
+              <button
+                onClick={() => patch({ keys: widget.keys.filter((_, j) => j !== i) })}
+                style={{ ...styles.input, minHeight: 40, cursor: 'pointer', marginTop: 8,
+                         background: 'var(--color-surface)', color: 'var(--color-text-dim)' }}>
+                − Remove key
+              </button>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 6, lineHeight: 1.6 }}>
+          Keys work in Live mode, and only when you are not typing in a field.
+          Each key is also a cell: right-click it in Live to link or Learn.
+        </div>
+      </Section>
+    </>
+  );
+}
+
+// ─── Manual Inspector Panel ───────────────────────────────────────────────────
+
+function ManualInspectorPanel({ widget, activePageId, updateWidget, updateWidgetRect }: {
+  widget: import('../../../../shared/types/project').ManualWidget;
+  activePageId: string;
+  updateWidget: StoreState['updateWidget'];
+  updateWidgetRect: StoreState['updateWidgetRect'];
+}) {
+  function patch(partial: Partial<import('../../../../shared/types/project').ManualWidget>) { updateWidget(activePageId, widget.id, partial as never); }
+
+  return (
+    <>
+      <div style={styles.header}>Manual</div>
+      <Section label="Label">
+        <input style={styles.input} value={widget.label} onChange={(e) => patch({ label: e.target.value })} />
+      </Section>
+      <Section label="Position">
+        <Row>
+          <Field label="X"><NumInput value={widget.rect.x} onChange={(v) => updateWidgetRect(activePageId, widget.id, { x: v })} /></Field>
+          <Field label="Y"><NumInput value={widget.rect.y} onChange={(v) => updateWidgetRect(activePageId, widget.id, { y: v })} /></Field>
+        </Row>
+        <Row>
+          <Field label="W"><NumInput value={widget.rect.width} onChange={(v) => updateWidgetRect(activePageId, widget.id, { width: v })} /></Field>
+          <Field label="H"><NumInput value={widget.rect.height} onChange={(v) => updateWidgetRect(activePageId, widget.id, { height: v })} /></Field>
+        </Row>
+      </Section>
+      <Section label="Text size">
+        <NumInput value={widget.fontScale ?? 1} min={0.6} max={2} step={0.1}
+          onChange={(v) => patch({ fontScale: Math.max(0.6, Math.min(2, v)) })} />
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 6 }}>
+          Multiplies the body text. Everything else scales with it.
+        </div>
+      </Section>
+      <Section label="Open tab">
+        <select style={styles.input} value={widget.openTab ?? 'project'}
+          onChange={(e) => patch({ openTab: e.target.value })}>
+          <optgroup label="Settings">
+            {MANUAL_SETTINGS_ENTRIES.map((e) => <option key={e.id} value={e.id}>{e.tab}</option>)}
+          </optgroup>
+          <optgroup label="Widgets">
+            {MANUAL_WIDGET_ENTRIES.map((e) => <option key={e.id} value={e.id}>{e.tab}</option>)}
+          </optgroup>
+        </select>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 6 }}>
+          Which tab it shows when the project loads. Tabs are clickable in Live mode.
+        </div>
       </Section>
     </>
   );
@@ -3902,7 +4397,7 @@ function InstanceInspectorPanel({ widget, activePageId, updateWidget, updateWidg
           <option value="">— none —</option>
           {sources.map((w) => <option key={w.id} value={w.id}>{w.label} ({w.kind})</option>)}
         </select>
-        <div style={{ fontSize: 11, color: 'var(--color-text-dim)', marginTop: 6 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginTop: 6 }}>
           Mirrors this widget's value — control it from the source or any instance.
         </div>
       </Section>
@@ -3924,10 +4419,12 @@ function MathInspectorPanel({ widget, activePageId, updateWidget, updateWidgetRe
 
   const usesB = ['add', 'subtract', 'multiply', 'min', 'max', 'avg'].includes(widget.operation);
 
-  function cellOptions(widgetId: string): number[] {
-    const w = page?.widgets.find((w) => w.id === widgetId);
+  // Cells are listed by their real name (S1.1, cue names, track names…) — "Cell 0"
+  // told you nothing about what you were picking.
+  function cellOptions(widgetId: string): { index: number; label: string }[] {
+    const w = page?.widgets.find((x) => x.id === widgetId);
     if (!w) return [];
-    return Array.from({ length: getCellCount(w) }, (_, i) => i);
+    return Array.from({ length: getCellCount(w) }, (_, i) => ({ index: i, label: cellLabel(w, i) }));
   }
 
   return (
@@ -3954,7 +4451,7 @@ function MathInspectorPanel({ widget, activePageId, updateWidget, updateWidgetRe
         <Field label="Cell">
           <select style={styles.input} value={widget.sourceACellIndex}
             onChange={(e) => patch({ sourceACellIndex: Number(e.target.value) })}>
-            {cellOptions(widget.sourceAWidgetId).map((i) => <option key={i} value={i}>Cell {i}</option>)}
+            {cellOptions(widget.sourceAWidgetId).map((c) => <option key={c.index} value={c.index}>{c.label}</option>)}
           </select>
         </Field>
       </Section>
@@ -3983,18 +4480,30 @@ function MathInspectorPanel({ widget, activePageId, updateWidget, updateWidgetRe
           <Field label="Cell">
             <select style={styles.input} value={widget.sourceBCellIndex}
               onChange={(e) => patch({ sourceBCellIndex: Number(e.target.value) })}>
-              {cellOptions(widget.sourceBWidgetId).map((i) => <option key={i} value={i}>Cell {i}</option>)}
+              {cellOptions(widget.sourceBWidgetId).map((c) => <option key={c.index} value={c.index}>{c.label}</option>)}
             </select>
           </Field>
         </Section>
       )}
-      <Section label="Scale / Offset">
-        <Field label="× Scale">
-          <NumInput value={widget.scale} onChange={(v) => patch({ scale: v })} step={0.1} />
-        </Field>
-        <Field label="+ Offset">
-          <NumInput value={widget.offset} onChange={(v) => patch({ offset: v })} step={0.01} />
-        </Field>
+      <Section label="Input range">
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 6 }}>
+          The span the operation result is read against.
+        </div>
+        <Row>
+          <Field label="Min"><NumInput value={widget.inMin ?? 0} onChange={(v) => patch({ inMin: v })} step={0.01} /></Field>
+          <Field label="Max"><NumInput value={widget.inMax ?? 1} onChange={(v) => patch({ inMax: v })} step={0.01} /></Field>
+        </Row>
+      </Section>
+      <Section label="Output range">
+        <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 6 }}>
+          Where it lands. Put Max below Min to invert.
+        </div>
+        <Row>
+          <Field label="Min"><NumInput value={widget.outMin ?? 0} onChange={(v) => patch({ outMin: v })} step={0.01} /></Field>
+          <Field label="Max"><NumInput value={widget.outMax ?? 1} onChange={(v) => patch({ outMax: v })} step={0.01} /></Field>
+        </Row>
+      </Section>
+      <Section label="Clamp">
         <Field label="Clamp 0–1">
           <button
             style={styles.input}
@@ -4034,10 +4543,10 @@ function ValueDisplayInspectorPanel({ widget, activePageId, updateWidget, update
   const widgetOptions = allWidgets.filter((w) => w.id !== widget.id);
   function patch(partial: Partial<ValueDisplayWidget>) { updateWidget(activePageId, widget.id, partial as never); }
 
-  function cellOptions(widgetId: string): number[] {
+  function cellOptions(widgetId: string): { index: number; label: string }[] {
     const w = allWidgets.find((x) => x.id === widgetId);
     if (!w) return [];
-    return Array.from({ length: getCellCount(w) }, (_, i) => i);
+    return Array.from({ length: getCellCount(w) }, (_, i) => ({ index: i, label: cellLabel(w, i) }));
   }
 
   return (
@@ -4067,7 +4576,7 @@ function ValueDisplayInspectorPanel({ widget, activePageId, updateWidget, update
         <Field label="Cell">
           <select style={styles.input} value={widget.sourceCellIndex}
             onChange={(e) => patch({ sourceCellIndex: Number(e.target.value) })}>
-            {cellOptions(widget.sourceWidgetId).map((i) => <option key={i} value={i}>Cell {i}</option>)}
+            {cellOptions(widget.sourceWidgetId).map((c) => <option key={c.index} value={c.index}>{c.label}</option>)}
           </select>
         </Field>
       </Section>
@@ -4106,7 +4615,8 @@ function ValueDisplayInspectorPanel({ widget, activePageId, updateWidget, update
 
 const styles: Record<string, React.CSSProperties> = {
   panel: {
-    width: 240,
+    // Wide enough that a full IPv4 address is readable in one field.
+    width: 300,
     flexShrink: 0,
     background: 'var(--color-surface)',
     borderLeft: '1px solid var(--color-border)',
@@ -4114,7 +4624,7 @@ const styles: Record<string, React.CSSProperties> = {
     overflowY: 'auto',
   },
   header: {
-    fontSize: 13, fontWeight: 600,
+    fontSize: 15, fontWeight: 600,
     marginBottom: 16,
     color: 'var(--color-accent)',
     textTransform: 'capitalize',
@@ -4125,19 +4635,20 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid var(--color-border)',
     color: 'var(--color-text)',
     borderRadius: 'var(--radius-sm)',
-    padding: '3px 6px',
-    fontSize: 12,
+    // Tall enough to be a comfortable touch target, not just a mouse one.
+    padding: '7px 9px',
+    fontSize: 14,
     boxSizing: 'border-box',
   },
   note: {
-    fontSize: 11,
+    fontSize: 12,
     color: 'var(--color-text-dim)',
     fontStyle: 'italic',
     marginBottom: 6,
   },
   pill: {
     display: 'inline-block',
-    fontSize: 10,
+    fontSize: 12,
     padding: '2px 8px',
     borderRadius: 10,
     background: 'var(--color-surface-2)',

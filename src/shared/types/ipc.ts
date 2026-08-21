@@ -26,7 +26,7 @@ export interface IpcChannels {
 
   // MIDI output
   'tr:midi:listPorts':        { req: void;                       res: MidiPortInfo[] };
-  'tr:midi:openPort':         { req: { portName: string; virtual: boolean }; res: { ok: boolean } };
+  'tr:midi:openPort':         { req: { portName: string; virtual: boolean; extraOutputs?: Array<{ id: string; portName: string }> }; res: { ok: boolean } };
   'tr:midi:closePort':        { req: void;                       res: void };
   'tr:midi:sendCC':           { req: MidiCCPayload;              res: void };
   'tr:midi:sendNote':         { req: MidiNotePayload;            res: void };
@@ -36,7 +36,7 @@ export interface IpcChannels {
 
   // MIDI input
   'tr:midi:listInputPorts':   { req: void;                       res: MidiPortInfo[] };
-  'tr:midi:openInputPort':    { req: { portName: string };       res: { ok: boolean } };
+  'tr:midi:openInputPort':    { req: { portName: string; extraPorts?: string[] };       res: { ok: boolean } };
   'tr:midi:inputEvent':       { req: never;                      res: MidiInputEventPayload };
   'tr:midi:mtcFrame':         { req: never;                      res: MtcFramePayload };
 
@@ -99,6 +99,7 @@ export interface MidiCCPayload {
   channel: number;   // 1–16
   cc: number;        // 0–127
   value: number;     // 0–127
+  outputId?: string;
 }
 
 export interface MidiNotePayload {
@@ -106,11 +107,13 @@ export interface MidiNotePayload {
   note: number;      // 0–127
   velocity: number;  // 0–127
   on: boolean;
+  outputId?: string;
 }
 
 export interface MidiPBPayload {
   channel: number;
   value: number;     // 0–16383
+  outputId?: string;
 }
 
 // ─── OSC Payloads ─────────────────────────────────────────────────────────────
@@ -119,23 +122,27 @@ export interface OscConfigPayload {
   targetHost: string;
   targetPort: number;
   listenPort: number;
+  outputs?: Array<{ id: string; host: string; port: number }>;
+  extraListenPorts?: number[];
 }
 
 export interface OscSendPayload {
   address: string;
   args: Array<{ type: 'f' | 'i' | 's'; value: number | string }>;
+  outputId?: string;
 }
 
 // ─── Art-Net Payloads ─────────────────────────────────────────────────────────
 
 export interface ArtNetConfigPayload {
-  targetHost: string;
+  outputs: Array<{ id: string; host: string }>;
 }
 
 export interface ArtNetChannelPayload {
   universe: number;  // 0–32767
   channel: number;   // 1–512
   value: number;     // 0–255
+  outputId?: string;
 }
 
 // Full universe update — more efficient than per-channel when many channels change at once
@@ -144,14 +151,15 @@ export interface ArtNetUniversePayload {
   // Sparse map: channel (1-based) → value (0–255)
   // Channels not listed keep their last value
   channels: Record<number, number>;
+  outputId?: string;
 }
 
 // ─── sACN Payloads ────────────────────────────────────────────────────────────
 
 export interface SacnConfigPayload {
-  mode: 'multicast' | 'unicast';
-  targetHost?: string;
   priority: number;
+  // Each output: host present = unicast to it, host absent = multicast (per universe).
+  outputs: Array<{ id: string; host?: string }>;
 }
 
 export interface SacnChannelPayload {
@@ -159,12 +167,14 @@ export interface SacnChannelPayload {
   channel: number;   // 1–512
   value: number;     // 0–255
   priority?: number; // overrides connection default if set
+  outputId?: string;
 }
 
 export interface SacnUniversePayload {
   universe: number;
   channels: Record<number, number>;
   priority?: number;
+  outputId?: string;
 }
 
 // ─── Enttec Open DMX USB Payloads ─────────────────────────────────────────────

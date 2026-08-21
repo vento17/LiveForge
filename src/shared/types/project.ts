@@ -29,7 +29,7 @@ export interface WidgetStyle {
 
 // ─── Widget Types ─────────────────────────────────────────────────────────────
 
-export type WidgetKind = 'sliderBank' | 'buttonGrid' | 'knobBank' | 'xyPad' | 'imageWidget' | 'textWidget' | 'stepSequencer' | 'graphWidget' | 'cues' | 'timeline' | 'spoutInput' | 'ndiInput' | 'submasters' | 'router' | 'autoBpm' | 'audioAnalyser' | 'soundPlayer' | 'lfoWidget' | 'mathWidget' | 'valueDisplay' | 'masterLevel' | 'instance';
+export type WidgetKind = 'sliderBank' | 'buttonGrid' | 'knobBank' | 'xyPad' | 'imageWidget' | 'textWidget' | 'stepSequencer' | 'graphWidget' | 'cues' | 'timeline' | 'spoutInput' | 'ndiInput' | 'submasters' | 'router' | 'autoBpm' | 'audioAnalyser' | 'soundPlayer' | 'lfoWidget' | 'mathWidget' | 'valueDisplay' | 'masterLevel' | 'instance' | 'keyboard' | 'manual';
 
 // ─── Widget Base ──────────────────────────────────────────────────────────────
 
@@ -152,6 +152,7 @@ export interface StepSequencerWidget extends WidgetBase {
   stepCount: number;          // 4 | 8 | 16 | 32
   speedMultiplier: SpeedMultiplier;
   steps: StepConfig[];        // length = stepCount
+  smooth?: number;            // 0 = instant step jumps, 1 = max slew on the output
 }
 
 // ─── Graph Widget ─────────────────────────────────────────────────────────────
@@ -262,7 +263,51 @@ export interface TrigTrack {
   muted?: boolean;
 }
 
-export type TimelineTrack = ValueTrack | ColorTrack | SoundTrack | TrigTrack;
+// ─── Cue track ────────────────────────────────────────────────────────────────
+// A track cut into contiguous blocks. Unlike a trig, a cue is a STATE, not an
+// edge: while the playhead sits anywhere inside block N, block N is held at 1 —
+// so scrubbing into the middle of a block fires it just as playing into it does.
+// No snapshot is stored; the block only says "we are in cue N".
+
+export interface CueRegion {
+  id: string;
+  time: number;      // 0–1 start of the block; the first block is pinned at 0
+  name: string;
+  color: string;
+  mapping: Mapping;  // held on while the playhead is inside this block
+}
+
+export interface CueTrack {
+  id: string;
+  kind: 'cue';
+  label: string;
+  cues: CueRegion[];   // sorted by time, always at least one, cues[0].time === 0
+  muted?: boolean;
+}
+
+// ─── Wait track ───────────────────────────────────────────────────────────────
+// Points that stop playback until you continue, so a timeline can be run as a
+// series of steps — animate, hold for the cue, carry on.
+
+export interface WaitPoint {
+  id: string;
+  time: number;    // 0–1
+  name?: string;
+  // Bypassed points let the transport run straight through, but stay on the
+  // track (greyed) and remain targets for the Ctrl+←/→ jump.
+  bypass?: boolean;
+}
+
+export interface WaitTrack {
+  id: string;
+  kind: 'wait';
+  label: string;
+  color: string;
+  points: WaitPoint[];
+  muted?: boolean;
+}
+
+export type TimelineTrack = ValueTrack | ColorTrack | SoundTrack | TrigTrack | CueTrack | WaitTrack;
 
 // Ruler markers — grey droplets in the ruler strip. They draw a vertical line
 // across every track and act as snap targets for keyframes/triggers.
@@ -282,6 +327,7 @@ export interface TimelineWidget extends WidgetBase {
   stopMapping: Mapping | null;
   timecodeSource?: 'off' | 'ltc' | 'mtc';
   timecodeFrameRate?: 24 | 25 | 29.97 | 30;
+  rulerUnit?: 'sec' | 'frames';   // how the ruler reads out; frames use timecodeFrameRate
 }
 
 // ─── Cues ─────────────────────────────────────────────────────────────────────
@@ -376,6 +422,16 @@ export interface RouterOutput {
   mapping: Mapping;
   targetWidgetId?: string;   // if set, routes to a widget cell instead of a protocol
   targetCellIndex?: number;
+  // "ALL": drive every cell of the target widget from this one output, instead
+  // of adding one output per cell. targetCellIndex is ignored when set.
+  targetAllCells?: boolean;
+  // Per-output range mapping: read the incoming value inside [inMin, inMax] and
+  // send it as [outMin, outMax]. Lets one source drive several outputs over
+  // different travels — or over opposite ones, by reversing the output pair.
+  inMin?: number;
+  inMax?: number;
+  outMin?: number;
+  outMax?: number;
 }
 
 export interface RouterRow {
@@ -384,6 +440,9 @@ export interface RouterRow {
   // widget source:
   widgetId: string;    // source widget id ('' = unassigned)
   cellIndex: number;   // 0-based cell index within the source widget
+  // "ALL": listen to every cell of the source widget. Paired with an ALL output
+  // this mirrors a whole bank onto another one, cell i → cell i.
+  allCells?: boolean;
   // MIDI source (midiCC / midiNote):
   midiChannel?: number;   // 1-16; 0 = any channel
   midiNumber?: number;    // 0-127 (CC number or note number)
@@ -496,9 +555,14 @@ export interface MathWidget extends WidgetBase {
   sourceBWidgetId: string;
   sourceBCellIndex: number;
   operation: MathOperation;
-  scale: number;         // multiplier applied to the result (default 1)
-  offset: number;        // added after scale (default 0)
-  clampOutput: boolean;  // clamp result to 0–1
+  // The operation result is read as a position inside [inMin, inMax], then
+  // re-mapped onto [outMin, outMax]. Leaving both at 0–1 passes it straight
+  // through. Reversing the output pair (outMin > outMax) inverts.
+  inMin: number;
+  inMax: number;
+  outMin: number;
+  outMax: number;
+  clampOutput: boolean;  // clamp the final result to 0–1
 }
 
 // ─── Value Display Widget ─────────────────────────────────────────────────────
@@ -534,6 +598,41 @@ export interface InstanceWidget extends WidgetBase {
   sourceWidgetId: string;   // widget being mirrored ('' = unassigned)
 }
 
+// ─── Keyboard Widget ──────────────────────────────────────────────────────────
+// Physical computer-keyboard keys turned into buttons. Each bound key is one
+// cell, so it can be mapped, linked and slaved exactly like a Button Grid cell.
+// cells[i] = 1 while key i is down (behaviour permitting), 0 otherwise.
+
+export interface KeyBinding {
+  id: string;
+  code: string;          // KeyboardEvent.code, e.g. 'KeyA', 'Space', 'F1'
+  label: string;         // shown on the key cap; defaults to a readable code
+  color?: string;        // overrides style.foregroundColor
+  behavior: ButtonBehavior;
+  onValue: number;
+  offValue: number;
+  mapping: Mapping;
+  feedbackRules: FeedbackRule[];
+}
+
+export interface KeyboardWidget extends WidgetBase {
+  kind: 'keyboard';
+  keys: KeyBinding[];
+  countX: number;        // keys per row in the on-screen layout
+  spacingX: number;
+  spacingY: number;
+}
+
+// ─── Manual Widget ────────────────────────────────────────────────────────────
+// In-app documentation. Two rows of tabs: settings topics (+ shortcuts) on top,
+// one tab per widget kind below. Read-only, no runtime cells, no output.
+
+export interface ManualWidget extends WidgetBase {
+  kind: 'manual';
+  openTab?: string;    // id of the tab shown on load
+  fontScale?: number;  // 0.6–2, multiplies the body text size
+}
+
 // ─── Union ────────────────────────────────────────────────────────────────────
 
 export type Widget =
@@ -558,7 +657,9 @@ export type Widget =
   | MathWidget
   | ValueDisplayWidget
   | MasterLevelWidget
-  | InstanceWidget;
+  | InstanceWidget
+  | KeyboardWidget
+  | ManualWidget;
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -575,15 +676,30 @@ export interface Page {
 
 // ─── Connection ───────────────────────────────────────────────────────────────
 
+// A named, individually-addressable extra output. The primary destination in each
+// connection is implicitly output id 'primary' (shown as "out 1"); these are the
+// additional ones a mapping can target by id.
+export interface MidiOutput { id: string; name: string; portName: string; }
+export interface HostOutput  { id: string; name: string; host: string; }              // Art-Net / sACN
+export interface OscOutput   { id: string; name: string; host: string; port: number; }
+
+export const PRIMARY_OUTPUT_ID = 'primary';
+
 export interface MidiConnection {
   type: 'midi';
   portName: string;
   virtualPort: boolean;
+  // Additional named MIDI output ports. Each mapping targets one output by id;
+  // clock is mirrored to all. Virtual-port option applies only to the primary port.
+  extraOutputs?: MidiOutput[];
 }
 
 export interface MidiInputConnection {
   type: 'midiInput';
   portName: string;
+  // Additional MIDI input ports (by name). Channel messages from each are merged
+  // into the same input stream; MTC/SysEx handling stays on the primary port.
+  extraPorts?: string[];
 }
 
 export interface OscConnection {
@@ -591,11 +707,18 @@ export interface OscConnection {
   targetHost: string;
   targetPort: number;
   listenPort: number;
+  // Additional named output destinations (host:port). A mapping targets one by id.
+  extraOutputs?: OscOutput[];
+  // Additional local ports to listen on (input). Messages arriving on any of
+  // these are merged into the same OSC feedback stream as listenPort.
+  extraListenPorts?: number[];
 }
 
 export interface ArtNetConnection {
   type: 'artnet';
   targetHost: string;
+  // Additional named output destinations (unicast/broadcast host). A mapping targets one by id.
+  extraOutputs?: HostOutput[];
 }
 
 export interface SacnConnection {
@@ -603,6 +726,8 @@ export interface SacnConnection {
   mode: 'multicast' | 'unicast';
   targetHost?: string;
   priority: number;
+  // Additional named unicast output destinations. A mapping targets one by id.
+  extraOutputs?: HostOutput[];
 }
 
 export interface LtcAudioConnection {
@@ -640,4 +765,7 @@ export interface Project {
   activePageId: string;
   tapTriggerMapping: Mapping | null;
   resetTriggerMapping: Mapping | null;
+  // Project-wide frame rate. Timelines read their ruler in frames against this
+  // unless they carry their own timecode rate.
+  frameRate?: 24 | 25 | 29.97 | 30 | 50 | 60;
 }

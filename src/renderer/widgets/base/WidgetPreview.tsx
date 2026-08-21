@@ -1,8 +1,10 @@
 import React from 'react';
-import type { Widget, CuesWidget, TimelineWidget, SpoutInputWidget, NdiInputWidget, SubmastersWidget, RouterWidget, AudioAnalyserWidget, SoundPlayerWidget, LfoWidget, MathWidget, ValueDisplayWidget, MasterLevelWidget, InstanceWidget } from '../../../shared/types/project';
+import type { Widget, CuesWidget, TimelineWidget, SpoutInputWidget, NdiInputWidget, SubmastersWidget, RouterWidget, AudioAnalyserWidget, SoundPlayerWidget, LfoWidget, MathWidget, ValueDisplayWidget, MasterLevelWidget, InstanceWidget, ManualWidget, KeyboardWidget } from '../../../shared/types/project';
 import SliderBankDesign from '../SliderBank/SliderBankDesign';
 import MasterLevelDesign from '../MasterLevel/MasterLevelDesign';
 import InstanceDesign from '../Instance/InstanceDesign';
+import ManualDesign from '../Manual/ManualDesign';
+import KeyboardDesign from '../Keyboard/KeyboardDesign';
 import ButtonGridDesign from '../ButtonGrid/ButtonGridDesign';
 import KnobBankDesign from '../KnobBank/KnobBankDesign';
 import XYPadDesign from '../XYPad/XYPadDesign';
@@ -46,6 +48,8 @@ export default function WidgetPreview({ widget }: { widget: Widget }): React.JSX
       case 'valueDisplay':     return <ValueDisplayDesign widget={widget as ValueDisplayWidget} />;
       case 'masterLevel':      return <MasterLevelDesign widget={widget as MasterLevelWidget} />;
       case 'instance':         return <InstanceDesign widget={widget as InstanceWidget} />;
+      case 'keyboard':         return <KeyboardDesign widget={widget as KeyboardWidget} />;
+      case 'manual':           return <ManualDesign widget={widget as ManualWidget} />;
       default:                 return null;
     }
   })();

@@ -8,6 +8,8 @@ export type MidiMessageType =
   | 'programChange'
   | 'aftertouch';
 
+// outputId selects which named output of the protocol receives this mapping.
+// undefined/'primary' → the primary destination ("out 1"). Never fans out to all.
 export interface MidiMapping {
   type: 'midi';
   messageType: MidiMessageType;
@@ -15,6 +17,7 @@ export interface MidiMapping {
   number: number;    // note or CC number 0–127 (ignored for pitchBend)
   minValue: number;  // 0–127 (or 0–16383 for pitchBend)
   maxValue: number;
+  outputId?: string;
 }
 
 export interface OscMapping {
@@ -23,6 +26,7 @@ export interface OscMapping {
   args?: OscArgType[];   // fixed args prepended before value
   minValue?: number;     // if set, rescale value: out = v*(max-min)+min
   maxValue?: number;
+  outputId?: string;
 }
 
 export type OscArgType = 'float' | 'int' | 'string';
@@ -37,6 +41,7 @@ export interface ArtNetMapping {
   channel: number;    // 1–512
   minValue: number;   // 0–255
   maxValue: number;   // 0–255
+  outputId?: string;
 }
 
 // ─── sACN / E1.31 ─────────────────────────────────────────────────────────────
@@ -49,6 +54,7 @@ export interface SacnMapping {
   minValue: number;   // 0–255
   maxValue: number;   // 0–255
   priority: number;   // 1–200, default 100
+  outputId?: string;
 }
 
 // ─── Enttec Open DMX USB ──────────────────────────────────────────────────────
