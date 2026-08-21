@@ -25,9 +25,12 @@ jobs:
           cache: npm
 
       # The Spout/NDI sidecar is packaged with PyInstaller
+      # MUST match the vendored wheels: src/main/sidecar/vendor ships numpy and
+      # Pillow as cp314 binaries. On any other minor the sidecar starts but
+      # cannot import them, and the released exe silently loses Spout/NDI.
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Install PyInstaller
         run: python -m pip install --upgrade pip pyinstaller

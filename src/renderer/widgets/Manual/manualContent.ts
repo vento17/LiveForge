@@ -360,7 +360,7 @@ export const WIDGET_ENTRIES: ManualEntry[] = [
       ['Target FPS', 'Caps the refresh rate. Zero means no limit.'],
       ['Border', 'Optional frame width and colour.'],
     ],
-    note: 'Needs the video sidecar running. On macOS and Linux this widget is unavailable.',
+    note: 'Needs the video sidecar running, which in turn needs CPython 3.14 exactly — the numpy and Pillow binaries shipped in the repo are built for that ABI. On macOS and Linux this widget is unavailable.',
   },
   {
     id: 'w-ndi', tab: 'NDI', title: 'NDI Input',
