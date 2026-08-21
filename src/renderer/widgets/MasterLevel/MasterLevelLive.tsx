@@ -73,7 +73,7 @@ export default function MasterLevelLive({ widget }: { widget: MasterLevelWidget 
           ...(isVertical
             ? { bottom: 0, left: 0, right: 0, height: `${value * 100}%` }
             : { left: 0, top: 0, bottom: 0, width: `${value * 100}%` }),
-          background: color, opacity: 0.55, transition: 'height 0.03s, width 0.03s',
+          background: color, opacity: 0.55,   // no transition — it would trail the drag
         }} />
         <div style={{
           position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',

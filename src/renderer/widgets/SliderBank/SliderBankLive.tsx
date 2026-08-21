@@ -151,7 +151,10 @@ export default function SliderBankLive({ widget }: { widget: SliderBankWidget })
                 : { left: 0, top: 0, bottom: 0, width: `${value * 100}%` }),
               background: color,
               opacity: 0.5,
-              transition: 'height 0.03s, width 0.03s',
+              // No CSS transition on the fill: the value already arrives every
+              // frame from the pointer, the router or a cue fade, so a transition
+              // only makes it chase a target two frames old. On a wide horizontal
+              // bank that lag is a visible gap behind the thumb, which has none.
             }} />
             {/* Thumb */}
             <div style={{
