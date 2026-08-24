@@ -434,6 +434,7 @@ export const WIDGET_ENTRIES: ManualEntry[] = [
       ['Fade time', 'Seconds to cross-fade into the cue. Zero snaps instantly. The − and + buttons either side step it by 0.1s.'],
       ['Colour', 'The launch button colour.'],
       ['First / Prev / Next / Random / Last', 'Navigation, each with its own mapping so a footswitch can drive the show.'],
+      ['Fire from MIDI', 'Right-click a cue row and Learn: the next note or CC becomes a Router row that fires that cue. A rising edge launches it, so a pad press fires and the release re-arms.'],
     ],
     note: 'Each cue is also a cell, so a cue can be fired from a Router or a button. The scope applies to cues you record from then on — ones already saved keep exactly what they captured. Transport state snaps on recall rather than fading, since it is on or off.',
   },
