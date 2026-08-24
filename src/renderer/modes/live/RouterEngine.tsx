@@ -5,6 +5,7 @@ import { useStore } from '../../store';
 import { cellCount } from '../../widgets/utils';
 import { remapRange, isIdentityRange } from '../../widgets/base/range';
 import { dispatchValue } from '../../ipc/dispatch';
+import { pressCell, releaseCell } from '../../widgets/ButtonGrid/behavior';
 import { bridge } from '../../ipc/bridge';
 
 // Headless engine that runs ALL router rows across ALL pages, regardless of
@@ -68,18 +69,43 @@ function findWidget(widgetId: string): Widget | undefined {
   return undefined;
 }
 
+// Last incoming value per driven button cell, so an edge can be told from a
+// stream of the same value. Module-level: the engine is mounted once.
+const lastButtonInput = new Map<string, number>();
+
 function driveCell(widgetId: string, cellIdx: number, v: number, isButton: boolean): void {
+  if (isButton) { driveButtonCell(widgetId, cellIdx, v); return; }
   useStore.getState().setCellValue(widgetId, cellIdx, v);
-  // Buttons show their lit state via `active`, not `value` — keep it in sync.
-  if (isButton) useStore.getState().setButtonActive(widgetId, cellIdx, v >= 0.5);
   const cellMapping = getWidgetCellMapping(widgetId, cellIdx);
   if (cellMapping) dispatchValue(cellMapping, v);
+}
+
+// A physical pad sends note-on then note-off. Writing that straight into the
+// cell made every linked button momentary regardless of how it was configured,
+// so the incoming EDGE is treated as a press/release and the cell's own
+// behaviour decides the state — a toggle stays lit after the pad is released.
+// pressCell also sends the cell's mapping, so a controller patched to the MIDI
+// output gets the resulting state back and lights its LED.
+function driveButtonCell(widgetId: string, cellIdx: number, v: number): void {
+  const w = findWidget(widgetId);
+  if (!w || w.kind !== 'buttonGrid') return;
+  const key = `${widgetId}:${cellIdx}`;
+  const prev = lastButtonInput.get(key) ?? 0;
+  lastButtonInput.set(key, v);
+  if (prev < 0.5 && v >= 0.5) pressCell(w, cellIdx);
+  else if (prev >= 0.5 && v < 0.5) releaseCell(w, cellIdx);
 }
 
 // srcIndex is set when the row listens to a whole widget: the value then belongs
 // to one specific source cell, and an ALL output mirrors it onto the SAME index
 // (bank → bank, 1:1). Without it an ALL output fans one value out to every cell.
 function routeValue(row: RouterRow, vIn: number, srcIndex?: number): void {
+  // Publish what the row received so the router widget can show it. Widget-input
+  // rows read their source cell directly and do not need this; MIDI and OSC rows
+  // have no cell to read, which is why they used to display a permanent 0.
+  if ((row.inputType ?? 'widget') !== 'widget') {
+    useStore.getState().setRouterInput(row.id, vIn);
+  }
   for (const out of row.outputs) {
     // Each output gets its own travel through the source's range.
     const v = isIdentityRange(out) ? vIn : remapRange(vIn, out);

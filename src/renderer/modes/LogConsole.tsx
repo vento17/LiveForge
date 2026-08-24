@@ -95,7 +95,7 @@ export default function LogConsole(): React.JSX.Element {
         title={hasError ? `${unseen} new error(s) — open log` : 'Open log'}
         onClick={() => setLogOpen(!open)}
         style={{
-          position: 'fixed', left: 8, bottom: 8, zIndex: 1200,
+          position: 'fixed', right: 8, bottom: 8, zIndex: 1200,
           width: 22, height: 22, padding: 0, borderRadius: '50%',
           background: hasError ? '#c0392b' : 'rgba(0,0,0,0.7)',
           border: `1px solid ${hasError ? '#ff6b5c' : '#2a2a2a'}`,

@@ -50,6 +50,9 @@ export default function SubmastersLive({ widget }: { widget: SubmastersWidget })
   const activePage = useActivePage();
   const widgetRuntime = useWidgetRuntime(widget.id);
 
+  const scenesRef = useRef(scenes);
+  scenesRef.current = scenes;
+
   const slavedCells = useSlavedCells(widget.id);
   const [contextMenu, setContextMenu] = useState<{ cellIndex: number; x: number; y: number } | null>(null);
   useEffect(() => {
@@ -148,18 +151,58 @@ export default function SubmastersLive({ widget }: { widget: SubmastersWidget })
 
   // ─── Flash (bottom buttons) ───────────────────────────────────────────────
 
+  // The flash button is cell countX + sceneIdx: its own cell, so it can be
+  // linked, learned and sent outward like any other button. The fader stays at
+  // cell sceneIdx.
+  const flashCell = (sceneIdx: number) => countX + sceneIdx;
+
   function handleFlashDown(sceneIdx: number) {
+    if (preFlashRef.current[sceneIdx] !== undefined) return;   // already held
     preFlashRef.current[sceneIdx] = faderValues[sceneIdx];
     setFlashedScenes((prev) => new Set([...prev, sceneIdx]));
+    const fc = flashCell(sceneIdx);
+    setCellValue(widget.id, fc, 1);
+    setButtonActive(widget.id, fc, true);
+    const m = scenesRef.current[sceneIdx]?.flashMapping;
+    if (m) dispatchButton(m, true, 127, 0);
     handleFaderChange(sceneIdx, 1.0);
   }
 
   function handleFlashUp(sceneIdx: number) {
+    if (preFlashRef.current[sceneIdx] === undefined) return;    // not held
     const prev = preFlashRef.current[sceneIdx] ?? 0;
     delete preFlashRef.current[sceneIdx];
-    setFlashedScenes((prev) => { const next = new Set(prev); next.delete(sceneIdx); return next; });
+    setFlashedScenes((p) => { const next = new Set(p); next.delete(sceneIdx); return next; });
+    const fc = flashCell(sceneIdx);
+    setCellValue(widget.id, fc, 0);
+    setButtonActive(widget.id, fc, false);
+    const m = scenesRef.current[sceneIdx]?.flashMapping;
+    if (m) dispatchButton(m, false, 127, 0);
     handleFaderChange(sceneIdx, prev);
   }
+
+  // A router row pointed at a flash cell drives the flash, so a pad on a
+  // controller behaves exactly like a finger on the button: held down while the
+  // pad is held, released when it is let go.
+  const flashDownRef = useRef(handleFlashDown);
+  const flashUpRef   = useRef(handleFlashUp);
+  flashDownRef.current = handleFlashDown;
+  flashUpRef.current   = handleFlashUp;
+  useEffect(() => {
+    const prev: number[] = [];
+    return useStore.subscribe((state) => {
+      const wr = state.runtime.widgets[widget.id];
+      if (!wr) return;
+      const n = countXRef.current;
+      for (let i = 0; i < n; i++) {
+        const v = wr.cells[n + i]?.value ?? 0;
+        const was = prev[i] ?? 0;
+        prev[i] = v;
+        if (was < 0.5 && v >= 0.5) flashDownRef.current(i);
+        else if (was >= 0.5 && v < 0.5) flashUpRef.current(i);
+      }
+    });
+  }, [widget.id]);
 
   // When this submaster's own fader cells change from OUTSIDE the local drag
   // handlers (e.g. a remote NetworkLive client, a router, or a cue), re-run the
@@ -241,25 +284,24 @@ export default function SubmastersLive({ widget }: { widget: SubmastersWidget })
                   background: 'rgba(0,0,0,0.35)',
                   borderRadius: 4, overflow: 'hidden',
                   touchAction: 'none',
-                  cursor: slavedCells.has(i) ? 'context-menu' : 'pointer',
+                  cursor: 'pointer',
                   outline: slavedCells.has(i) ? SLAVE_OUTLINE : undefined,
                   outlineOffset: slavedCells.has(i) ? -2 : undefined,
                 }}
                 onPointerDown={(e) => {
-                  // Slaved faders are driven by the router — right-click → Unlink.
-                  if (slavedCells.has(i)) return;
+                  // A router link is a second way in, not a lock.
                   e.currentTarget.setPointerCapture(e.pointerId);
                   const rect = e.currentTarget.getBoundingClientRect();
                   const v = clamp(1 - (e.clientY - rect.top) / rect.height, 0, 1);
                   handleFaderChange(i, v);
                 }}
                 onPointerMove={(e) => {
-                  if (slavedCells.has(i)) return;
                   if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const v = clamp(1 - (e.clientY - rect.top) / rect.height, 0, 1);
                   handleFaderChange(i, v);
                 }}
+                data-lf-widget={widget.id} data-lf-cell={i}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -275,7 +317,6 @@ export default function SubmastersLive({ widget }: { widget: SubmastersWidget })
                   position: 'absolute', bottom: 0, left: 0, right: 0,
                   height: `${fv * 100}%`,
                   background: btnColor, opacity: 0.45,
-                  transition: 'height 0.03s',
                 }} />
                 {/* Thumb */}
                 <div style={{
@@ -287,20 +328,34 @@ export default function SubmastersLive({ widget }: { widget: SubmastersWidget })
                 }} />
               </div>
 
-              {/* Bottom button — flash */}
+              {/* Bottom button — flash. Cell countX + i, so it links and learns. */}
               <div
+                data-lf-widget={widget.id} data-lf-cell={countX + i}
                 onPointerDown={(e) => {
+                  if (e.button !== 0) return;      // right-click → context menu
                   e.currentTarget.setPointerCapture(e.pointerId);
                   handleFlashDown(i);
                 }}
                 onPointerUp={() => handleFlashUp(i)}
                 onPointerCancel={() => handleFlashUp(i)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setContextMenu({ cellIndex: countX + i, x: e.clientX, y: e.clientY });
+                }}
+                onMouseMove={(e) => {
+                  e.stopPropagation();
+                  useStore.getState().setHoverInfo(
+                    widget.label + ' · ' + (scene?.label ?? String(i + 1)) + ' flash');
+                }}
                 style={{
                   flexShrink: 0, height: 28,
                   background: isFlashing ? btnColor : 'rgba(255,255,255,0.06)',
                   borderRadius: 3, cursor: 'pointer',
                   touchAction: 'none',
                   border: '1px solid transparent',
+                  outline: slavedCells.has(countX + i) ? SLAVE_OUTLINE : undefined,
+                  outlineOffset: slavedCells.has(countX + i) ? -2 : undefined,
                   transition: 'background 0.08s',
                 }}
               />

@@ -13,6 +13,8 @@ export interface RuntimeSlice {
 
   // Value updates from touch input
   setCellValue: (widgetId: string, cellIndex: number, value: number) => void;
+  // Records what a router row received, for the router's own readout.
+  setRouterInput: (rowId: string, value: number) => void;
   setButtonActive: (widgetId: string, cellIndex: number, active: boolean) => void;
   // Play/stop of a widget's own transport, so Cues can capture and restore it.
   setWidgetPlaying: (widgetId: string, playing: boolean) => void;
@@ -36,7 +38,7 @@ function makeWidgetRuntime(widget: Widget): WidgetRuntime {
 }
 
 export const createRuntimeSlice: StateCreator<StoreState, [['zustand/immer', never]], [], RuntimeSlice> = (set) => ({
-  runtime: { widgets: {} },
+  runtime: { widgets: {}, routerInputs: {} },
 
   initRuntime: (widgets) => set((s) => {
     // Build the new map into a plain object first, copying existing cell VALUES
@@ -67,7 +69,14 @@ export const createRuntimeSlice: StateCreator<StoreState, [['zustand/immer', nev
   }),
 
   resetRuntime: () => set((s) => {
-    s.runtime = { widgets: {} };
+    s.runtime = { widgets: {}, routerInputs: {} };
+  }),
+
+  setRouterInput: (rowId, value) => set((s) => {
+    if (!s.runtime.routerInputs) s.runtime.routerInputs = {};
+    // A controller re-sending the same value should not churn the store.
+    if (s.runtime.routerInputs[rowId] === value) return;
+    s.runtime.routerInputs[rowId] = value;
   }),
 
   setCellValue: (widgetId, cellIndex, value) => set((s) => {

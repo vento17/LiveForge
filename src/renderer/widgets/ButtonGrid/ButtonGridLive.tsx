@@ -1,11 +1,10 @@
 import React, { useRef, useEffect, useState } from 'react';
 import type { ButtonGridWidget } from '../../../shared/types/project';
 import { useStore, useWidgetRuntime } from '../../store';
-import { dispatchButton } from '../../ipc/dispatch';
 import { bridge } from '../../ipc/bridge';
 import CellLinkMenu from '../base/CellLinkMenu';
 import { useSlavedCells, SLAVE_OUTLINE } from '../base/useSlavedCells';
-import { BEHAVIOR_BADGE } from './behavior';
+import { BEHAVIOR_BADGE, pressCell, releaseCell } from './behavior';
 
 function apcVelocityToColor(v: number): string {
   if (v === 1) return '#006600';
@@ -76,6 +75,11 @@ export default function ButtonGridLive({ widget }: { widget: ButtonGridWidget })
       if ((m.messageType !== 'noteOn' && m.messageType !== 'noteOff') || m.channel !== ch || m.number !== note) return;
       const on = vel > 0;
       applyFeedback(w.id, i, on ? apcVelocityToColor(vel) : null, null);
+      // The LED colour is always worth taking. The STATE is not: for a toggle or
+      // a radio cell this app owns the state, and echoing the controller's
+      // note-on/note-off back into it would drag the cell into momentary
+      // behaviour — which is exactly what a linked toggle must not do.
+      if ((cell?.behavior ?? 'momentary') !== 'momentary') return;
       setButtonActive(w.id, i, on);
       setCellValue(w.id, i, on ? 1 : 0);
     });
@@ -107,55 +111,10 @@ export default function ButtonGridLive({ widget }: { widget: ButtonGridWidget })
   }
 
   // ─── Button logic ──────────────────────────────────────────────────────────
-  function activate(i: number) {
-    const cell = cells[i];
-    const rt = runtime?.cells[i];
-    const mapping = cell?.mapping ?? widget.mapping;
-    const on = cell?.onValue ?? 127;
-    const off = cell?.offValue ?? 0;
-
-    if (cell?.behavior === 'toggle') {
-      const next = !(rt?.active ?? false);
-      setButtonActive(widget.id, i, next);
-      setCellValue(widget.id, i, next ? 1 : 0);
-      dispatchButton(mapping, next, on, off);
-    } else if (cell?.behavior === 'pulse') {
-      setButtonActive(widget.id, i, true);
-      setCellValue(widget.id, i, 1);
-      dispatchButton(mapping, true, on, off);
-      setTimeout(() => {
-        setButtonActive(widget.id, i, false);
-        setCellValue(widget.id, i, 0);
-        dispatchButton(mapping, false, on, off);
-      }, 100);
-    } else if (cell?.behavior === 'radio') {
-      cells.forEach((c, idx) => {
-        if (c?.behavior === 'radio' && idx !== i) {
-          const m = c?.mapping ?? widget.mapping;
-          setButtonActive(widget.id, idx, false);
-          setCellValue(widget.id, idx, 0);
-          dispatchButton(m, false, c?.onValue ?? 127, c?.offValue ?? 0);
-        }
-      });
-      setButtonActive(widget.id, i, true);
-      setCellValue(widget.id, i, 1);
-      dispatchButton(mapping, true, on, off);
-    } else {
-      setButtonActive(widget.id, i, true);
-      setCellValue(widget.id, i, 1);
-      dispatchButton(mapping, true, on, off);
-    }
-  }
-
-  function deactivate(i: number) {
-    const cell = cells[i];
-    const behavior = cell?.behavior ?? 'momentary';
-    if (behavior === 'toggle' || behavior === 'pulse' || behavior === 'radio') return;
-    const mapping = cell?.mapping ?? widget.mapping;
-    setButtonActive(widget.id, i, false);
-    setCellValue(widget.id, i, 0);
-    dispatchButton(mapping, false, cell?.onValue ?? 127, cell?.offValue ?? 0);
-  }
+  // Shared with the Router so a press from the screen and a press from a MIDI
+  // controller produce exactly the same state change.
+  function activate(i: number)   { pressCell(widgetRef.current, i); }
+  function deactivate(i: number) { releaseCell(widgetRef.current, i); }
 
   // ─── Render ────────────────────────────────────────────────────────────────
   const pad = Math.max(spacingX, spacingY);
@@ -224,7 +183,7 @@ export default function ButtonGridLive({ widget }: { widget: ButtonGridWidget })
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                cursor: isSlave ? 'context-menu' : 'pointer',
+                cursor: 'pointer',
                 touchAction: 'none',
                 transition: 'background 0.06s',
                 userSelect: 'none',
@@ -232,13 +191,14 @@ export default function ButtonGridLive({ widget }: { widget: ButtonGridWidget })
               onPointerDown={(e) => {
                 e.preventDefault();
                 if (e.button !== 0) return;   // right-click → context menu only
-                // Slaved buttons are driven by the router — locked; right-click → Unlink.
-                if (isSlave) return;
+                // A slaved button is still playable by hand: the router link is
+                // a second way in, not a lock. The red outline says it is linked.
                 activate(cellIdx);
               }}
-              onPointerUp={() => { if (!isSlave) deactivate(cellIdx); }}
-              onPointerLeave={() => { if (!isSlave) deactivate(cellIdx); }}
-              onPointerCancel={() => { if (!isSlave) deactivate(cellIdx); }}
+              onPointerUp={() => deactivate(cellIdx)}
+              onPointerLeave={() => deactivate(cellIdx)}
+              onPointerCancel={() => deactivate(cellIdx)}
+              data-lf-widget={widget.id} data-lf-cell={cellIdx}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();

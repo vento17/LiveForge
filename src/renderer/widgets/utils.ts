@@ -35,7 +35,10 @@ export function cellCount(widget: Widget): number {
     case 'xyPad':          return 2;
     case 'stepSequencer':  return 1;
     case 'graphWidget':    return 1;
-    case 'submasters':     return widget.countX;
+    // 0..countX-1 = faders, countX..2*countX-1 = the flash buttons under them.
+    // Faders keep their indices, so links saved before flash cells existed still
+    // point at the same fader.
+    case 'submasters':     return widget.countX * 2;
     case 'autoBpm':        return 16; // 8 trigger cells (0-7) + 8 ramp cells (8-15)
     case 'timeline':       return widget.tracks.length + timelineTrigCells(widget).length + timelineCueCells(widget).length;
     case 'audioAnalyser':  return 21; // 0-4=audio, 5-12=BPM trig, 13-20=BPM ramp

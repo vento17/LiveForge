@@ -96,7 +96,7 @@ export default function KnobBankLive({ widget }: { widget: KnobBankWidget }): Re
             style={{
               display: 'flex', flexDirection: 'column',
               alignItems: 'center', justifyContent: 'center',
-              gap: 4, cursor: isSlave ? 'context-menu' : 'ns-resize', touchAction: 'none',
+              gap: 4, cursor: 'ns-resize', touchAction: 'none',
               borderRadius: 4,
               outline: isLearnTarget ? '2px solid #ff6600'
                 : isDragOver ? '2px solid #64c8ff'
@@ -105,8 +105,7 @@ export default function KnobBankLive({ widget }: { widget: KnobBankWidget }): Re
               background: isDragOver ? 'rgba(100,200,255,0.1)' : undefined,
             }}
             onPointerDown={(e) => {
-              // Slaved knobs are driven by the router — locked; right-click → Unlink.
-              if (isSlave) return;
+              // A router link is a second way in, not a lock.
               e.currentTarget.setPointerCapture(e.pointerId);
               drags.current.set(e.pointerId, {
                 startX: e.clientX,
@@ -115,7 +114,6 @@ export default function KnobBankLive({ widget }: { widget: KnobBankWidget }): Re
               });
             }}
             onPointerMove={(e) => {
-              if (isSlave) return;
               const drag = drags.current.get(e.pointerId);
               if (!drag) return;
               // Up OR right raises the value; down OR left lowers it.
@@ -126,6 +124,7 @@ export default function KnobBankLive({ widget }: { widget: KnobBankWidget }): Re
             }}
             onPointerUp={(e) => { drags.current.delete(e.pointerId); }}
             onPointerCancel={(e) => { drags.current.delete(e.pointerId); }}
+            data-lf-widget={widget.id} data-lf-cell={i}
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();

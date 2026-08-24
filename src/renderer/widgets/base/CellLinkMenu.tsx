@@ -4,6 +4,7 @@ import {
   findSlaveLink, listLinkableSources, sourceCells, listRouters, pageIdOfWidget,
   cellLabel,
 } from './links';
+import { createRouterOn } from './createRouter';
 
 interface Props {
   x: number;
@@ -13,7 +14,7 @@ interface Props {
   onClose: () => void;
 }
 
-type View = 'root' | 'sources' | 'cells' | 'routers';
+type View = 'root' | 'sources' | 'cells' | 'routers' | 'learnRouters';
 
 
 
@@ -38,11 +39,30 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
   const routers = listRouters(project);
   const srcWidget = project.pages.flatMap((p) => p.widgets).find((w) => w.id === srcWidgetId);
 
-  const startLearn = (protocol: 'midi' | 'osc'): void => {
-    const activePageId = useStore.getState().activePageId;
-    if (!activePageId) { onClose(); return; }
-    useStore.getState().setMidiLearnTarget({ pageId: activePageId, widgetId, cellIndex, protocol });
+  // Which router the learned row will go into is decided BEFORE listening, so
+  // the bind is never a surprise — same choice the manual link path asks for.
+  const [learnProtocol, setLearnProtocol] = useState<'midi' | 'osc'>('midi');
+
+  const startLearn = (routerId: string): void => {
+    const pageId = pageIdOfWidget(useStore.getState().project, widgetId)
+                ?? useStore.getState().activePageId;
+    if (!pageId) { onClose(); return; }
+    useStore.getState().setMidiLearnTarget({
+      pageId, widgetId, cellIndex, protocol: learnProtocol, routerId,
+    });
     onClose();
+  };
+
+  const startLearnNewRouter = (): void => {
+    const store = useStore.getState();
+    const pageId = pageIdOfWidget(store.project, widgetId) ?? store.activePageId;
+    if (!pageId) { onClose(); return; }
+    startLearn(createRouterOn(pageId));
+  };
+
+  const askLearnRouter = (protocol: 'midi' | 'osc'): void => {
+    setLearnProtocol(protocol);
+    setView('learnRouters');
   };
 
   const commitLink = (routerId: string): void => {
@@ -58,18 +78,7 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
     const store = useStore.getState();
     const slavePageId = pageIdOfWidget(store.project, widgetId) ?? store.activePageId;
     if (!slavePageId) { onClose(); return; }
-    const routerId = store.addWidget(slavePageId, 'router');
-
-    // Auto-created routers open in the bottom-right corner of their page.
-    const fresh = useStore.getState();
-    const page = fresh.project.pages.find((p) => p.id === slavePageId);
-    const created = page?.widgets.find((w) => w.id === routerId);
-    if (page && created) {
-      const margin = 16;
-      const x = Math.max(0, page.width - created.rect.width - margin);
-      const y = Math.max(0, page.height - created.rect.height - margin);
-      fresh.updateWidgetRect(slavePageId, routerId, { x, y });
-    }
+    const routerId = createRouterOn(slavePageId);
 
     store.linkSlaveCell({
       slaveWidgetId: widgetId, slaveCellIndex: cellIndex,
@@ -146,8 +155,8 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
             </button>
           ) : (
             <>
-              {hasMidi && <button style={itemStyle()} onClick={() => startLearn('midi')}>⬤ Learn MIDI CC</button>}
-              {hasOsc  && <button style={itemStyle()} onClick={() => startLearn('osc')}>⬤ Learn OSC</button>}
+              {hasMidi && <button style={itemStyle()} onClick={() => askLearnRouter('midi')}>⬤ Learn MIDI CC ▸</button>}
+              {hasOsc  && <button style={itemStyle()} onClick={() => askLearnRouter('osc')}>⬤ Learn OSC ▸</button>}
               {!hasMidi && !hasOsc && (
                 <div style={emptyStyle}>
                   no MIDI/OSC connection — add one in Settings
@@ -197,6 +206,26 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
               </button>
             );
           })}
+        </>
+      )}
+
+      {view === 'learnRouters' && (
+        <>
+          <button style={backStyle} onClick={() => setView('root')}>
+            ‹ Learn {learnProtocol.toUpperCase()}
+          </button>
+          <div style={dividerStyle} />
+          <div style={headerStyle}>put the learned row in</div>
+          {routers.map((r) => (
+            <button key={r.id} style={itemStyle()} onClick={() => startLearn(r.id)}>
+              {r.label}
+              {project.pages.length > 1 && <span style={{ color: '#666' }}> · {r.pageName}</span>}
+            </button>
+          ))}
+          <div style={dividerStyle} />
+          <button style={itemStyle('#66cc99')} onClick={startLearnNewRouter}>
+            ＋ New router
+          </button>
         </>
       )}
 

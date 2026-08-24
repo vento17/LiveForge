@@ -1,7 +1,7 @@
 import React from 'react';
 import type { RouterWidget, RouterRow, Widget } from '../../../shared/types/project';
 import type { Mapping, OscMapping, MidiMapping, ArtNetMapping, SacnMapping, EnttecDmxMapping } from '../../../shared/types/mapping';
-import { useActivePage, useStore } from '../../store';
+import { useStore } from '../../store';
 import { cellLabel, allCellsLabel } from '../base/links';
 import { remapRange, isIdentityRange } from '../base/range';
 
@@ -52,8 +52,17 @@ function sourceLabel(row: RouterRow, src: Widget | undefined): { primary: string
 }
 
 export default function RouterDesign({ widget }: { widget: RouterWidget }): React.JSX.Element {
-  const page = useActivePage();
+  const project = useStore((s) => s.project);
   const fs = widget.style.fontSize || 13;
+
+  // Links may point at any page, and this router is often read while a different
+  // page is on screen — so resolve names against the whole project, not just the
+  // visible page, which is what used to render a bare "?".
+  const widgetById = React.useMemo(() => {
+    const m = new Map<string, Widget>();
+    for (const p of project.pages) for (const w of p.widgets) m.set(w.id, w);
+    return m;
+  }, [project.pages]);
 
   // Custom equality prevents re-renders when widget-cell values haven't changed.
   const runtimeValues = useStore(
@@ -61,7 +70,12 @@ export default function RouterDesign({ widget }: { widget: RouterWidget }): Reac
       const out: Record<string, number> = {};
       for (const row of widget.rows) {
         const t = row.inputType ?? 'widget';
-        if (t !== 'widget' || !row.widgetId) continue;
+        if (t !== 'widget') {
+          // MIDI/OSC rows have no source cell — use what the engine last received.
+          out[row.id] = state.runtime.routerInputs?.[row.id] ?? 0;
+          continue;
+        }
+        if (!row.widgetId) continue;
         if (row.allCells) continue;   // no single value to track
         const cell = state.runtime.widgets[row.widgetId]?.cells[row.cellIndex];
         out[row.id] = cell ? (cell.value ?? (cell.active ? 1 : 0)) : 0;
@@ -89,13 +103,18 @@ export default function RouterDesign({ widget }: { widget: RouterWidget }): Reac
         ◈ router
       </div>
 
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div className="lf-scroll" style={{
+        flex: 1, minHeight: 0,
+        overflowY: 'auto', overflowX: 'hidden',
+        display: 'flex', flexDirection: 'column', gap: 6,
+        paddingRight: 4,
+      }}>
         {widget.rows.length === 0 ? (
           <div style={{ fontSize: fs, color: '#404040', fontStyle: 'italic' }}>
             no routes — configure in inspector
           </div>
         ) : widget.rows.map((row) => {
-          const src = page?.widgets.find((w) => w.id === row.widgetId);
+          const src = widgetById.get(row.widgetId);
           const lbl = sourceLabel(row, src);
           const v   = runtimeValues[row.id] ?? 0;
           // An ALL source is many signals at once, so there is no single number
@@ -110,7 +129,7 @@ export default function RouterDesign({ widget }: { widget: RouterWidget }): Reac
                   {lbl.primary}
                   <span style={{ fontSize: fs - 2, color: '#777', fontWeight: 400 }}> · {lbl.secondary}</span>
                 </span>
-                {(row.inputType ?? 'widget') === 'widget' && showValue && (
+                {showValue && (
                   <span style={{ fontSize: fs - 1, color: '#aaa', marginLeft: 8 }}>
                     {v.toFixed(3)}
                   </span>
@@ -121,7 +140,7 @@ export default function RouterDesign({ widget }: { widget: RouterWidget }): Reac
               {row.outputs.map((out) => {
                 const ov = isIdentityRange(out) ? v : remapRange(v, out);
                 if (out.targetWidgetId) {
-                  const tw = page?.widgets.find((w) => w.id === out.targetWidgetId);
+                  const tw = widgetById.get(out.targetWidgetId);
                   // A widget cell only ever holds 0–1, so show what it will land on.
                   const cellV = Math.max(0, Math.min(1, ov));
                   return (

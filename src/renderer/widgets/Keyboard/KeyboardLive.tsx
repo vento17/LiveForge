@@ -160,19 +160,20 @@ export default function KeyboardLive({ widget }: { widget: KeyboardWidget }): Re
                 position: 'relative',
                 display: 'flex', flexDirection: 'column',
                 alignItems: 'center', justifyContent: 'center',
-                cursor: isSlave ? 'context-menu' : 'pointer',
+                cursor: 'pointer',
                 touchAction: 'none', userSelect: 'none',
                 transition: 'background 0.06s',
                 minHeight: 0, overflow: 'hidden',
               }}
               onPointerDown={(e) => {
                 e.preventDefault();
-                if (e.button !== 0 || isSlave) return;
+                if (e.button !== 0) return;
                 activate(i);
               }}
               onPointerUp={() => deactivate(i)}
               onPointerLeave={() => deactivate(i)}
               onPointerCancel={() => deactivate(i)}
+              data-lf-widget={widget.id} data-lf-cell={i}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();

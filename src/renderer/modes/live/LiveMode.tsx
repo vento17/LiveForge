@@ -124,7 +124,7 @@ export default function LiveMode(): React.JSX.Element {
         style={{
           position: 'absolute',
           top: 8,
-          left: liveSidebarOpen ? SIDEBAR_WIDTH + 8 : 8,
+          right: liveSidebarOpen ? SIDEBAR_WIDTH + 8 : 8,
           zIndex: 200,
           width: 22, height: 22,
           padding: 0,
@@ -135,15 +135,12 @@ export default function LiveMode(): React.JSX.Element {
           cursor: 'pointer',
           fontSize: 10,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          transition: 'left 0.2s ease',
+          transition: 'right 0.2s ease',
           lineHeight: 1,
         }}
       >
-        {liveSidebarOpen ? '◀' : '▶'}
+        {liveSidebarOpen ? '▶' : '◀'}
       </button>
-
-      {/* Collapsible sidebar */}
-      {liveSidebarOpen && <LiveSidebar />}
 
       {/* Canvas fills remaining space.
           EVERY page stays mounted, not just the visible one. A widget only
@@ -179,6 +176,10 @@ export default function LiveMode(): React.JSX.Element {
           );
         })}
       </div>
+
+      {/* Collapsible sidebar — after the canvas so it sits on the right edge,
+          where a hand resting on the screen is less likely to cover the show. */}
+      {liveSidebarOpen && <LiveSidebar />}
 
       {/* Hover info bar — shows the widget/cell under the cursor so per-cell
           labels can be turned off to keep widgets compact. */}

@@ -366,13 +366,14 @@ export default function CuesLive({ widget }: { widget: CuesWidget }): React.JSX.
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverIdx(i); }}
                 onDrop={(e) => { e.preventDefault(); handleDrop(i); }}
                 onDragEnd={() => { setDragSrcIdx(null); setDragOverIdx(null); }}
+                data-lf-widget={widget.id} data-lf-cell={i}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   setContextMenu({ cellIndex: i, x: e.clientX, y: e.clientY });
                 }}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 4, height: 32, flexShrink: 0,
+                  display: 'flex', alignItems: 'center', gap: 4, height: 38, flexShrink: 0,
                   opacity: dragSrcIdx === i ? 0.4 : 1,
                   outline: slavedCells.has(i) ? SLAVE_OUTLINE : isActive ? '1px solid #ffffff44' : 'none',
                   outlineOffset: slavedCells.has(i) ? -2 : undefined,
@@ -395,10 +396,10 @@ export default function CuesLive({ widget }: { widget: CuesWidget }): React.JSX.
                       onBlur={commitRename}
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') commitRename(); }}
                       onClick={(e) => e.stopPropagation()}
-                      style={{ background: 'transparent', border: 'none', outline: 'none', color: contrast, width: '100%', fontSize: 12, fontWeight: 500 }}
+                      style={{ background: 'transparent', border: 'none', outline: 'none', color: contrast, width: '100%', fontSize: 16, fontWeight: 600, fontFamily: 'inherit' }}
                     />
                   ) : (
-                    <span style={{ fontSize: 12, fontWeight: 500, color: contrast, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none' }}>
+                    <span style={{ fontSize: 16, fontWeight: 600, color: contrast, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none' }}>
                       {cue.name}
                     </span>
                   )}

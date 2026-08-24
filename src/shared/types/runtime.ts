@@ -27,6 +27,10 @@ export interface WidgetRuntime {
 
 export interface RuntimeState {
   widgets: Record<string, WidgetRuntime>; // keyed by widgetId
+  // Last value each router row received, keyed by row id. A row fed by MIDI or
+  // OSC has no source cell to read, so without this the router could only ever
+  // print 0 for it — the routing worked, the readout lied.
+  routerInputs: Record<string, number>;
 }
 
 // ─── IPC feedback message (Main → Renderer) ───────────────────────────────────

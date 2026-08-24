@@ -51,17 +51,17 @@ export default function MasterLevelLive({ widget }: { widget: MasterLevelWidget 
           flex: 1, position: 'relative', minHeight: 0,
           background: 'rgba(0,0,0,0.4)', borderRadius: 4, overflow: 'hidden',
           touchAction: 'none',
-          cursor: isSlave ? 'context-menu' : 'pointer',
+          cursor: 'pointer',
           outline: isSlave ? SLAVE_OUTLINE : undefined,
           outlineOffset: isSlave ? -2 : undefined,
         }}
         onPointerDown={(e) => {
-          // Slaved master is driven by the router — right-click → Unlink.
-          if (isSlave) return;
+          // A router link is a second way in, not a lock.
           e.currentTarget.setPointerCapture(e.pointerId);
           setFromPointer(e);
         }}
-        onPointerMove={(e) => { if (!isSlave && e.currentTarget.hasPointerCapture(e.pointerId)) setFromPointer(e); }}
+        onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) setFromPointer(e); }}
+        data-lf-widget={widget.id} data-lf-cell={0}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();

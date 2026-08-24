@@ -42,6 +42,7 @@ export interface LayoutSlice {
 
   addPage: () => void;
   removePage: (pageId: string) => void;
+  reorderPages: (fromIndex: number, toIndex: number) => void;
   renamePage: (pageId: string, name: string) => void;
 
   setConnection: (conn: Connection) => void;
@@ -253,8 +254,25 @@ export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', neve
 
   removePage: (pageId) => set((s) => {
     if (s.project.pages.length === 1) return;
+    // Any page can be deleted now, not just the last one, so this throws away
+    // real work — make it undoable like the other destructive edits.
+    const snapshot = JSON.parse(JSON.stringify(s.project)) as Project;
+    s.projectHistory.push(snapshot);
+    if (s.projectHistory.length > 50) s.projectHistory.shift();
     s.project.pages = s.project.pages.filter((p) => p.id !== pageId);
     if (s.activePageId === pageId) s.activePageId = s.project.pages[0].id;
+    touchUpdatedAt(s.project);
+  }),
+
+  // Pages are identified by id everywhere (links, cue scopes, router rows), so
+  // moving one in the array only changes the order of the tabs — nothing that
+  // points at a page needs rewriting.
+  reorderPages: (fromIndex, toIndex) => set((s) => {
+    const n = s.project.pages.length;
+    if (fromIndex === toIndex) return;
+    if (fromIndex < 0 || fromIndex >= n || toIndex < 0 || toIndex >= n) return;
+    const [moved] = s.project.pages.splice(fromIndex, 1);
+    s.project.pages.splice(toIndex, 0, moved);
     touchUpdatedAt(s.project);
   }),
 

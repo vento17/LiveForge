@@ -7,6 +7,7 @@ import DesignMode from '../modes/design/DesignMode';
 import LiveMode from '../modes/live/LiveMode';
 import GlobalBar from '../modes/GlobalBar';
 import LogConsole from '../modes/LogConsole';
+import LearnModeLayer from '../modes/LearnModeLayer';
 
 export default function App(): React.JSX.Element {
   const mode    = useMode();
@@ -50,6 +51,7 @@ export default function App(): React.JSX.Element {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <GlobalBar />
+      <LearnModeLayer />
       <div style={{ flex: 1, overflow: 'hidden' }}>
         {mode === 'design' ? <DesignMode /> : <LiveMode />}
       </div>

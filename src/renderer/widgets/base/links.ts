@@ -66,6 +66,12 @@ export function cellLabel(w: Widget | undefined, cellIndex: number): string {
     if (cellIndex < 13) return `trig ×${BEAT_DIVS[cellIndex - 5] ?? '?'}`;
     return `ramp ×${BEAT_DIVS[cellIndex - 13] ?? '?'}`;
   }
+  if (w.kind === 'submasters') {
+    const n = w.countX;
+    const scene = w.scenes[cellIndex % n];
+    const name = scene?.label || String((cellIndex % n) + 1);
+    return cellIndex < n ? name : `${name} flash`;
+  }
   if (w.kind === 'soundPlayer') {
     const track = w.tracks[cellIndex];
     return track ? (track.label || track.fileName || `track ${cellIndex + 1}`) : `#${cellIndex + 1}`;

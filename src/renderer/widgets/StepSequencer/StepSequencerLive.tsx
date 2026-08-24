@@ -356,7 +356,6 @@ export default function StepSequencerLive({ widget }: { widget: StepSequencerWid
                 position: 'absolute', bottom: 0, left: 0, right: 0,
                 height: `${fillPct}%`,
                 background: fillColor,
-                transition: 'height 0.04s',
               }} />
 
               <div style={{

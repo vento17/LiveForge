@@ -432,7 +432,7 @@ export default function LiveSidebar(): React.JSX.Element {
       width: 248,
       flexShrink: 0,
       background: '#090909',
-      borderRight: '1px solid #1a1a1a',
+      borderLeft: '1px solid #1a1a1a',
       display: 'flex',
       flexDirection: 'column',
       overflowY: 'auto',

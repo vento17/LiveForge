@@ -14,7 +14,6 @@ export default function XYPadLive({ widget }: { widget: XYPadWidget }): React.JS
   const activePointer = useRef<number | null>(null);
 
   const slaved = useSlavedCells(widget.id);       // 0 = X axis, 1 = Y axis
-  const slavedRef = useRef(slaved); slavedRef.current = slaved;
   const isSlaved = slaved.has(0) || slaved.has(1);
 
   // Right-click: pick which axis to link, then show the link menu for that cell.
@@ -38,9 +37,9 @@ export default function XYPadLive({ widget }: { widget: XYPadWidget }): React.JS
     if (invertX) nx = 1 - nx;
     if (!invertY) ny = 1 - ny;
 
-    // A slaved axis is driven by the router — leave it untouched (right-click → Unlink).
-    if (!slavedRef.current.has(0)) { setCellValue(widget.id, 0, nx); dispatchValue(mappingX, nx); }
-    if (!slavedRef.current.has(1)) { setCellValue(widget.id, 1, ny); dispatchValue(mappingY, ny); }
+    // A router link is a second way in, not a lock: both axes stay draggable.
+    setCellValue(widget.id, 0, nx); dispatchValue(mappingX, nx);
+    setCellValue(widget.id, 1, ny); dispatchValue(mappingY, ny);
   }, [widget.id, mappingX, mappingY, invertX, invertY, setCellValue]);
 
   return (
@@ -126,6 +125,13 @@ export default function XYPadLive({ widget }: { widget: XYPadWidget }): React.JS
           {widget.label}
         </div>
       )}
+
+      {/* Learn mode only (shown by CSS): the pad is one element but two cells,
+          so a tap needs somewhere to say which axis it means. */}
+      <div className="lf-learn-zone" data-lf-widget={widget.id} data-lf-cell={0}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 34 }}>X</div>
+      <div className="lf-learn-zone" data-lf-widget={widget.id} data-lf-cell={1}
+        style={{ position: 'absolute', left: 0, top: 0, bottom: 34, width: 34 }}>Y</div>
 
       {/* Right-click: axis picker → link menu */}
       {menu && menu.axis === null && (

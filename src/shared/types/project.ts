@@ -377,6 +377,9 @@ export interface SubmasterScene {
   label: string;
   color?: string;      // top button color when scene has data
   snapshot: Record<string, number[]>; // widgetId → cell value array (0-1)
+  // The flash button below the fader is a cell in its own right, so it can be
+  // linked, learned and sent outward like any other button.
+  flashMapping?: Mapping | null;
 }
 
 export interface SubmastersWidget extends WidgetBase {

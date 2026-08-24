@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import type { SoundPlayerWidget } from '../../../shared/types/project';
 import { useStore } from '../../store';
+import CellLinkMenu from '../base/CellLinkMenu';
 import { dispatchValue } from '../../ipc/dispatch';
 
 interface TrackState {
@@ -21,6 +22,16 @@ export default function SoundPlayerLive({ widget }: { widget: SoundPlayerWidget 
   // One Audio element per track (keyed by track id)
   const audioRefs  = useRef<Record<string, HTMLAudioElement>>({});
   const [states, setStates] = useState<TrackState[]>(() => widget.tracks.map(makeTrackState));
+  // Each track is cells[i]: a rising edge plays it, a falling edge stops it. The
+  // wiring was there but there was no way to Learn onto it — no context menu.
+  const [contextMenu, setContextMenu] = useState<{ cellIndex: number; x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = () => setContextMenu(null);
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
+  }, [contextMenu]);
+
   const statesRef  = useRef(states);
   statesRef.current = states;
 
@@ -191,6 +202,7 @@ export default function SoundPlayerLive({ widget }: { widget: SoundPlayerWidget 
             <TrackRow
               key={track.id}
               index={i}
+              widgetId={widget.id}
               label={track.label || track.fileName || `Track ${i + 1}`}
               playing={st.playing}
               paused={st.paused}
@@ -211,19 +223,34 @@ export default function SoundPlayerLive({ widget }: { widget: SoundPlayerWidget 
                   { tracks } as never,
                 );
               }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setContextMenu({ cellIndex: i, x: e.clientX, y: e.clientY });
+              }}
             />
           );
         })}
       </div>
+      {contextMenu && (
+        <CellLinkMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          widgetId={widget.id}
+          cellIndex={contextMenu.cellIndex}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 }
 
-function TrackRow({ index, label, playing, paused, progress, volume, color, fs,
-  onPlay, onPause, onStop, onVolume }: {
-  index: number; label: string; playing: boolean; paused: boolean; progress: number;
+function TrackRow({ index, widgetId, label, playing, paused, progress, volume, color, fs,
+  onPlay, onPause, onStop, onVolume, onContextMenu }: {
+  index: number; widgetId: string; label: string; playing: boolean; paused: boolean; progress: number;
   volume: number; color: string; fs: number;
   onPlay: () => void; onPause: () => void; onStop: () => void; onVolume: (v: number) => void;
+  onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const btnStyle = (active?: boolean): React.CSSProperties => ({
     background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px',
@@ -232,12 +259,15 @@ function TrackRow({ index, label, playing, paused, progress, volume, color, fs,
   });
 
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 4,
-      padding: '3px 8px',
-      background: playing ? 'rgba(255,255,255,0.04)' : 'transparent',
-      borderLeft: playing ? `2px solid ${color}` : '2px solid transparent',
-    }}>
+    <div
+      data-lf-widget={widgetId} data-lf-cell={index}
+      onContextMenu={onContextMenu}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 4,
+        padding: '3px 8px',
+        background: playing ? 'rgba(255,255,255,0.04)' : 'transparent',
+        borderLeft: playing ? `2px solid ${color}` : '2px solid transparent',
+      }}>
       {/* Index */}
       <span style={{ fontSize: 9, color: '#444', width: 14, textAlign: 'right', flexShrink: 0 }}>
         {index + 1}

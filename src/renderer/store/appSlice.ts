@@ -21,7 +21,13 @@ export interface MidiLearnTarget {
   cellIndex: number;
   mappingKey?: string;  // 'mapping' | 'triggerMapping' | 'rampMapping' etc.
   protocol?: 'midi' | 'osc';  // defaults to 'midi' when absent
+  routerId?: string;    // router the learned row goes into; picked before learning
 }
+
+// Learn mode: instead of right-clicking a single cell, arm the whole UI. Tap a
+// cell to select it, move the physical control to bind it, repeat. Stays on
+// until you switch it off, so a whole desk can be patched in one pass.
+export type LearnMode = 'midi' | 'osc' | null;
 
 export type LogLevel = 'info' | 'warn' | 'error';
 export interface LogEntry {
@@ -52,6 +58,10 @@ export interface AppSlice {
 
   // MIDI Learn
   midiLearnTarget: MidiLearnTarget | null;
+  learnMode: LearnMode;
+  // Router chosen when learn mode was switched on: every cell patched in this
+  // session lands in it, so a whole pass ends up in one readable router.
+  learnRouterId: string | null;
 
   // Live sidebar
   liveSidebarOpen: boolean;
@@ -99,6 +109,7 @@ export interface AppSlice {
   setConnectedProtocol: (key: string, connected: boolean) => void;
   setMidiClockEnabled: (enabled: boolean) => void;
   setMidiLearnTarget: (target: MidiLearnTarget | null) => void;
+  setLearnMode: (mode: LearnMode, routerId?: string | null) => void;
   setLiveSidebarOpen: (open: boolean) => void;
   setLiveSelectedWidgetId: (id: string | null) => void;
 
@@ -129,6 +140,8 @@ export const createAppSlice: StateCreator<StoreState, [['zustand/immer', never]]
   connectedProtocols: {},
   midiClockEnabled: false,
   midiLearnTarget: null,
+  learnMode: null,
+  learnRouterId: null,
   liveSidebarOpen: false,
   liveSelectedWidgetId: null,
 
@@ -206,6 +219,14 @@ export const createAppSlice: StateCreator<StoreState, [['zustand/immer', never]]
 
   setMidiClockEnabled: (enabled) => set((s) => { s.midiClockEnabled = enabled; }),
   setMidiLearnTarget: (target) => set((s) => { s.midiLearnTarget = target; }),
+  // Leaving learn mode also disarms whatever cell was waiting, so a stray CC
+  // arriving afterwards cannot bind something you already stopped patching.
+  setLearnMode: (mode, routerId) => set((s) => {
+    s.learnMode = mode;
+    if (mode === null) { s.midiLearnTarget = null; s.learnRouterId = null; return; }
+    if (routerId !== undefined) s.learnRouterId = routerId;
+    if (s.midiLearnTarget) s.midiLearnTarget = { ...s.midiLearnTarget, protocol: mode };
+  }),
   setLiveSidebarOpen: (open) => set((s) => { s.liveSidebarOpen = open; }),
   setLiveSelectedWidgetId: (id) => set((s) => { s.liveSelectedWidgetId = id; }),
 });

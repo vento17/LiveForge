@@ -3,10 +3,12 @@ import { useStore, useMode, useIsLocked, useProject, useActivePageId } from '../
 import type { MidiMapping, OscMapping } from '../../shared/types/mapping';
 import { bridge } from '../ipc/bridge';
 import { AutoBpmService } from '../audio/AutoBpmService';
+import { listRouters } from '../widgets/base/links';
+import { createRouterOn } from '../widgets/base/createRouter';
 import type { AutoBpmConfig } from '../audio/AutoBpmService';
 
 export const GLOBAL_BAR_HEIGHT = 76; // 50px main bar + 26px BPM strip
-const MAX_PAGES = 8;
+const MAX_PAGES = 12;
 
 // Module-level singleton — persists for the lifetime of the app
 let _autoBpmSvc: AutoBpmService | null = null;
@@ -54,10 +56,11 @@ export default function GlobalBar(): React.JSX.Element {
     openWidgetPicker, openSettings, closeSettings, isSettingsOpen,
     masterBpm, setMasterBpm,
     isGlobalPlaying, setGlobalPlaying, triggerGlobalPlay,
-    addPage, removePage, setActivePageId,
+    addPage, removePage, reorderPages, setActivePageId,
     bpmMode, setBpmMode, autoBpmConfig, setAutoBpmConfig,
     autoBpmStatus, autoBpmAudioDeviceId, setAutoBpmAudioDeviceId, autoBpmError, setAutoBpmError,
     midiClockEnabled, midiLearnTarget,
+    learnMode, setLearnMode, learnRouterId,
     connectedProtocols, networkEnabled,
   } = useStore((s) => ({
     setMode:                 s.setMode,
@@ -74,6 +77,7 @@ export default function GlobalBar(): React.JSX.Element {
     triggerGlobalPlay:       s.triggerGlobalPlay,
     addPage:                 s.addPage,
     removePage:              s.removePage,
+    reorderPages:            s.reorderPages,
     setActivePageId:         s.setActivePageId,
     bpmMode:                 s.bpmMode,
     setBpmMode:              s.setBpmMode,
@@ -86,9 +90,37 @@ export default function GlobalBar(): React.JSX.Element {
     setAutoBpmError:         s.setAutoBpmError,
     midiClockEnabled:        s.midiClockEnabled,
     midiLearnTarget:         s.midiLearnTarget,
+    learnMode:               s.learnMode,
+    learnRouterId:           s.learnRouterId,
+    setLearnMode:            s.setLearnMode,
     connectedProtocols:      s.connectedProtocols,
     networkEnabled:          s.networkEnabled,
   }));
+
+  // Same test the right-click Learn entry uses: configured in Settings OR
+  // actually connected. MIDI learn listens on the input port, so either entry
+  // counts.
+  const hasMidiConn = !!connectedProtocols['midiInput'] || !!connectedProtocols['midi'] ||
+    project.connections.some((c) => c.type === 'midiInput' || c.type === 'midi');
+  const hasOscConn  = !!connectedProtocols['osc'] ||
+    project.connections.some((c) => c.type === 'osc');
+
+  // Learn mode asks which router the pass should fill before it starts
+  // listening, so a patching session ends up in one place instead of scattering
+  // rows across whichever router happened to be nearest each cell.
+  const [learnPick, setLearnPick] = useState<'midi' | 'osc' | null>(null);
+  const learnRouterLabel = project.pages.flatMap((p) => p.widgets)
+    .find((w) => w.id === learnRouterId)?.label ?? '?';
+
+  function toggleLearn(protocol: 'midi' | 'osc') {
+    if (learnMode === protocol) { setLearnMode(null); setLearnPick(null); return; }
+    setLearnPick(protocol);
+  }
+
+  function chooseLearnRouter(protocol: 'midi' | 'osc', routerId: string) {
+    setLearnMode(protocol, routerId);
+    setLearnPick(null);
+  }
 
   const pages    = project.pages;
   const canAdd   = pages.length < MAX_PAGES;
@@ -222,7 +254,13 @@ export default function GlobalBar(): React.JSX.Element {
       inputType: 'midiCC' | 'midiNote' | 'osc';
       midiChannel?: number; midiNumber?: number; oscAddress?: string;
     }) {
-      const routerId = routerFor(t.pageId, t.widgetId);
+      // The router was chosen up front (right-click Learn, or the header learn
+      // buttons), so every row of one patching pass lands in the same place.
+      // routerFor() is only the fallback for a target armed without a choice.
+      const chosen = t.routerId
+        && useStore.getState().project.pages.some((p) => p.widgets.some((w) => w.id === t.routerId))
+        ? t.routerId : null;
+      const routerId = chosen ?? routerFor(t.pageId, t.widgetId);
       if (!routerId) return;
       useStore.getState().linkSlaveCell({
         slaveWidgetId: t.widgetId, slaveCellIndex: t.cellIndex,
@@ -343,6 +381,24 @@ export default function GlobalBar(): React.JSX.Element {
     if (loaded) loadProject(loaded);
   }
 
+  // Page tabs: drag to reorder, right-click to delete the one you point at —
+  // the − button only ever removed the last page, which is rarely the one you
+  // wanted gone.
+  // The source index lives in a ref, not in state: dragstart and drop can land
+  // in the same batch, and a state update that has not committed yet would make
+  // the drop a no-op. The state copy exists only to grey out the dragged tab.
+  const dragPageRef = useRef<number | null>(null);
+  const [dragPageIdx, setDragPageIdx] = useState<number | null>(null);
+  const [overPageIdx, setOverPageIdx] = useState<number | null>(null);
+  const [pageMenu, setPageMenu] = useState<{ pageId: string; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!pageMenu) return;
+    const close = () => setPageMenu(null);
+    const t = setTimeout(() => document.addEventListener('pointerdown', close), 0);
+    return () => { clearTimeout(t); document.removeEventListener('pointerdown', close); };
+  }, [pageMenu]);
+
   function handleDeleteLast() {
     if (!canRemove) return;
     removePage(pages[pages.length - 1].id);
@@ -365,6 +421,44 @@ export default function GlobalBar(): React.JSX.Element {
         <div style={styles.sep} />
         <Btn onClick={handleSave} disabled={isLocked}>Save</Btn>
         <Btn onClick={handleLoad} disabled={isLocked}>Load</Btn>
+
+        {/* Learn mode — two half-height buttons stacked into one Btn slot.
+            Arms the whole surface so cells can be patched by tapping them
+            instead of right-clicking each one. */}
+        <div style={styles.sep} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, position: 'relative' }}>
+          <LearnBtn
+            label={learnMode === 'midi' ? `MIDI → ${learnRouterLabel}` : 'LEARN MIDI'}
+            on={learnMode === 'midi'}
+            title={learnMode === 'midi'
+              ? `Learn mode ON — rows go into ${learnRouterLabel}. Tap a cell, move the control. Esc to exit.`
+              : 'Learn mode (MIDI): pick a router, then tap a cell and move the physical control.'}
+            onClick={() => toggleLearn('midi')}
+          />
+          <LearnBtn
+            label={learnMode === 'osc' ? `OSC → ${learnRouterLabel}` : 'LEARN OSC'}
+            on={learnMode === 'osc'}
+            title={learnMode === 'osc'
+              ? `Learn mode ON — rows go into ${learnRouterLabel}. Tap a cell, send the message. Esc to exit.`
+              : 'Learn mode (OSC): pick a router, then tap a cell and send the OSC message.'}
+            onClick={() => toggleLearn('osc')}
+          />
+          {learnPick && (
+            <LearnRouterPicker
+              protocol={learnPick}
+              routers={listRouters(project)}
+              showPage={project.pages.length > 1}
+              warn={learnPick === 'midi' ? !hasMidiConn : !hasOscConn}
+              onPick={(id) => chooseLearnRouter(learnPick, id)}
+              onNew={() => {
+                const pageId = activePageId ?? project.pages[0]?.id;
+                if (!pageId) return;
+                chooseLearnRouter(learnPick, createRouterOn(pageId));
+              }}
+              onCancel={() => setLearnPick(null)}
+            />
+          )}
+        </div>
 
         {/* Center: pages (absolutely positioned within row 1) */}
         <div style={styles.pageCenter}>
@@ -394,19 +488,88 @@ export default function GlobalBar(): React.JSX.Element {
               <PageBtn
                 key={page.id}
                 label={String(i + 1)}
-                title={page.name}
+                title={mode === 'design'
+                  ? `${page.name} — drag to reorder, right-click to delete`
+                  : page.name}
                 active={isActive}
                 dimmed={false}
                 bg={isActive ? page.backgroundColor : 'var(--color-surface-2)'}
                 wide={mode === 'live'}
                 onClick={() => setActivePageId(page.id)}
+                draggable={mode === 'design' && pages.length > 1}
+                dragging={dragPageIdx === i}
+                dropSide={overPageIdx === i && dragPageIdx !== null && dragPageIdx !== i
+                  ? (dragPageIdx < i ? 'right' : 'left') : null}
+                onDragStart={() => { dragPageRef.current = i; setDragPageIdx(i); }}
+                onDragOver={() => setOverPageIdx(i)}
+                onDrop={() => {
+                  const from = dragPageRef.current;
+                  if (from !== null) reorderPages(from, i);
+                  dragPageRef.current = null;
+                  setDragPageIdx(null); setOverPageIdx(null);
+                }}
+                onDragEnd={() => { dragPageRef.current = null; setDragPageIdx(null); setOverPageIdx(null); }}
+                onContextMenu={mode === 'design'
+                  ? (e) => { e.preventDefault(); setPageMenu({ pageId: page.id, x: e.clientX, y: e.clientY }); }
+                  : undefined}
               />
             );
           })}
         </div>
 
+        {/* Page context menu — delete the page you pointed at, not the last one */}
+        {pageMenu && (() => {
+          const pg = pages.find((p) => p.id === pageMenu.pageId);
+          const idx = pages.findIndex((p) => p.id === pageMenu.pageId);
+          const item: React.CSSProperties = {
+            display: 'block', width: '100%', minHeight: 38, padding: '9px 16px',
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 14, color: '#ccc', textAlign: 'left', fontFamily: 'monospace',
+          };
+          return (
+            <div
+              style={{
+                position: 'fixed', left: Math.min(pageMenu.x, window.innerWidth - 250), top: pageMenu.y,
+                zIndex: 9999, background: '#1a1a1a', border: '1px solid #3a3a3a',
+                borderRadius: 6, padding: '6px 0', minWidth: 240,
+                boxShadow: '0 6px 28px rgba(0,0,0,0.75)',
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <div style={{ padding: '8px 16px', color: '#8a8a8a', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>
+                page {idx + 1} · {pg?.name ?? ''}
+              </div>
+              <div style={{ height: 1, background: '#3a3a3a', margin: '4px 0' }} />
+              <button style={{ ...item, color: canRemove ? '#ff6666' : '#555' }}
+                disabled={!canRemove}
+                onClick={() => {
+                  if (!canRemove) return;
+                  removePage(pageMenu.pageId);
+                  setPageMenu(null);
+                }}>
+                ✕ Delete page{pg?.widgets.length ? ` (${pg.widgets.length} widgets)` : ''}
+              </button>
+              {!canRemove && (
+                <div style={{ padding: '2px 16px 8px', color: '#555', fontSize: 12, fontFamily: 'monospace' }}>
+                  the last page cannot be deleted
+                </div>
+              )}
+              <div style={{ height: 1, background: '#3a3a3a', margin: '4px 0' }} />
+              <button style={item} onClick={() => setPageMenu(null)}>cancel</button>
+            </div>
+          );
+        })()}
+
         {/* Right spacer */}
         <div style={{ flex: 1 }} />
+
+        {/* Reset — a second instance of the BPM-row ↺, up here at play/stop size
+            so it can be hit without looking down at the smaller strip. */}
+        <button
+          style={{ ...styles.tapBtn, minWidth: 30, ...(resetFlash ? styles.resetBtnFlash : {}) }}
+          title="Reset tap averaging and all widgets"
+          onPointerDown={(e) => { e.preventDefault(); resetRef.current(); }}
+        >↺</button>
 
         {/* Global play / stop */}
         <button
@@ -737,7 +900,8 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
 
 // ─── Page button ──────────────────────────────────────────────────────────────
 
-function PageBtn({ label, title, active, dimmed, bg, wide, onClick }: {
+function PageBtn({ label, title, active, dimmed, bg, wide, onClick,
+  draggable, dragging, dropSide, onDragStart, onDragOver, onDrop, onDragEnd, onContextMenu }: {
   label: string;
   title: string;
   active: boolean;
@@ -745,13 +909,32 @@ function PageBtn({ label, title, active, dimmed, bg, wide, onClick }: {
   bg: string;
   wide?: boolean;
   onClick: () => void;
+  draggable?: boolean;
+  dragging?: boolean;
+  dropSide?: 'left' | 'right' | null;
+  onDragStart?: () => void;
+  onDragOver?: () => void;
+  onDrop?: () => void;
+  onDragEnd?: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const fgColor = active ? contrastColor(bg.startsWith('#') ? bg : '#111') : 'var(--color-text-dim)';
   return (
     <button
       title={title}
       onClick={onClick}
+      draggable={draggable}
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart?.(); }}
+      onDragOver={(e) => { if (!onDragOver) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; onDragOver(); }}
+      onDrop={(e) => { if (!onDrop) return; e.preventDefault(); onDrop(); }}
+      onDragEnd={() => onDragEnd?.()}
+      onContextMenu={onContextMenu}
       style={{
+        // Which edge the dragged page would land on. Drawn as an inset shadow
+        // rather than a border so the button does not change size mid-drag.
+        boxShadow: dropSide === 'left'  ? 'inset 3px 0 0 0 var(--color-accent)'
+                 : dropSide === 'right' ? 'inset -3px 0 0 0 var(--color-accent)'
+                 : undefined,
         width: wide ? 72 : 42,
         height: 40,
         padding: 0,
@@ -763,14 +946,14 @@ function PageBtn({ label, title, active, dimmed, bg, wide, onClick }: {
         fontWeight: 700,
         fontFamily: 'inherit',
         letterSpacing: '0.04em',
-        cursor: dimmed ? 'default' : 'pointer',
         borderRadius: 'var(--radius-sm)',
         background: active ? bg : 'var(--color-surface-2)',
         border: `1px solid ${active ? 'var(--color-accent)' : 'var(--color-border)'}`,
         color: fgColor,
-        opacity: dimmed ? 0.3 : 1,
+        ...(dimmed ? { opacity: 0.3 } : dragging ? { opacity: 0.35 } : { opacity: 1 }),
         transition: 'background 0.08s, color 0.08s',
         pointerEvents: dimmed ? 'none' : undefined,
+        cursor: dimmed ? 'default' : draggable ? 'grab' : 'pointer',
       }}
     >
       {label}
@@ -801,6 +984,104 @@ function Btn({
       }}
     >
       {children}
+    </button>
+  );
+}
+
+// ─── Learn-mode router picker ─────────────────────────────────────────────────
+// Drops under the two learn buttons. Same question the right-click Learn entry
+// asks, so both routes into learn behave alike.
+
+function LearnRouterPicker({ protocol, routers, showPage, warn, onPick, onNew, onCancel }: {
+  protocol: 'midi' | 'osc';
+  routers: { id: string; label: string; pageName: string }[];
+  showPage: boolean;
+  warn: boolean;
+  onPick: (routerId: string) => void;
+  onNew: () => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function away(e: MouseEvent) {
+      if (!ref.current?.contains(e.target as Node)) onCancel();
+    }
+    function esc(e: KeyboardEvent) { if (e.key === 'Escape') onCancel(); }
+    // Deferred: the click that opened the picker is still travelling.
+    const t = setTimeout(() => document.addEventListener('mousedown', away), 0);
+    window.addEventListener('keydown', esc, true);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('mousedown', away);
+      window.removeEventListener('keydown', esc, true);
+    };
+  }, [onCancel]);
+
+  const item: React.CSSProperties = {
+    display: 'block', width: '100%', minHeight: 34, padding: '8px 14px',
+    background: 'none', border: 'none', cursor: 'pointer',
+    fontSize: 13, color: '#ccc', textAlign: 'left', fontFamily: 'monospace',
+  };
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: 'absolute', top: 46, left: 0, zIndex: 9999,
+        background: '#1a1a1a', border: '1px solid #3a3a3a', borderRadius: 6,
+        padding: '6px 0', minWidth: 240, maxHeight: '60vh', overflowY: 'auto',
+        boxShadow: '0 6px 28px rgba(0,0,0,0.75)',
+      }}
+    >
+      <div style={{ padding: '8px 14px', color: '#8a8a8a', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>
+        learn {protocol} → put rows in
+      </div>
+      {warn && (
+        <div style={{ padding: '4px 14px 8px', color: '#e0a030', fontSize: 11, fontFamily: 'monospace' }}>
+          no {protocol.toUpperCase()} connection configured — nothing will arrive
+        </div>
+      )}
+      <div style={{ height: 1, background: '#3a3a3a', margin: '4px 0' }} />
+      {routers.length === 0 && (
+        <div style={{ padding: '8px 14px', color: '#555', fontSize: 12, fontFamily: 'monospace' }}>
+          no router yet
+        </div>
+      )}
+      {routers.map((r) => (
+        <button key={r.id} style={item} onClick={() => onPick(r.id)}>
+          {r.label}
+          {showPage && <span style={{ color: '#666' }}> · {r.pageName}</span>}
+        </button>
+      ))}
+      <div style={{ height: 1, background: '#3a3a3a', margin: '4px 0' }} />
+      <button style={{ ...item, color: '#66cc99' }} onClick={onNew}>＋ New router</button>
+    </div>
+  );
+}
+
+// ─── Learn-mode button ────────────────────────────────────────────────────────
+// Half height, so two of them stack into the same footprint as one Save/Load.
+
+function LearnBtn({ label, on, disabled, title, onClick }: {
+  label: string; on: boolean; disabled?: boolean; title?: string; onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      style={{
+        ...styles.btn,
+        height: 20,
+        padding: '0 10px',
+        fontSize: 10,
+        letterSpacing: '0.12em',
+        fontWeight: 700,
+        ...(on ? { background: '#ff8c00', border: '1px solid #ff8c00', color: '#000' } : {}),
+        ...(disabled ? styles.btnDisabled : {}),
+      }}
+    >
+      {label}
     </button>
   );
 }

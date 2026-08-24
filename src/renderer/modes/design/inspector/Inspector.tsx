@@ -2674,6 +2674,11 @@ function SubmastersInspectorPanel({ widget, activePageId, updateWidget, updateWi
     patch({ scenes: newScenes });
   }
 
+  function handleFlashMapping(sceneIdx: number, mapping: import('../../../../shared/types/mapping').Mapping | null) {
+    const newScenes = widget.scenes.map((s, i) => i === sceneIdx ? { ...s, flashMapping: mapping } : s);
+    patch({ scenes: newScenes });
+  }
+
   function handleClearScene(sceneIdx: number) {
     const newScenes = widget.scenes.map((s, i) => i === sceneIdx ? { ...s, snapshot: {} } : s);
     patch({ scenes: newScenes });
@@ -2779,13 +2784,15 @@ function SubmastersInspectorPanel({ widget, activePageId, updateWidget, updateWi
 
       <Section label="Scene Config">
         <div style={{ fontSize: 12, color: 'var(--color-text-dim)', marginBottom: 8 }}>
-          Label and color per scene button.
+          Label and color per scene button. ⚡ sets what the flash button below
+          the fader sends; it is also a linkable cell, so it can be learned.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {widget.scenes.map((scene, i) => {
             const hasData = Object.keys(scene.snapshot).length > 0;
             return (
-              <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                 <span style={{ fontSize: 12, color: 'var(--color-text-dim)', width: 14, flexShrink: 0 }}>{i + 1}</span>
                 <input
                   style={{ ...styles.input, flex: 1 }}
@@ -2808,6 +2815,23 @@ function SubmastersInspectorPanel({ widget, activePageId, updateWidget, updateWi
                 {!hasData && (
                   <span style={{ fontSize: 12, color: '#333', width: 16, flexShrink: 0, textAlign: 'center' }}>—</span>
                 )}
+                <button
+                  title={scene.flashMapping ? 'Flash output — click to remove' : 'Add flash button output'}
+                  onClick={() => handleFlashMapping(i, scene.flashMapping
+                    ? null
+                    : { type: 'midi', messageType: 'noteOn', channel: 1, number: 36 + i, minValue: 0, maxValue: 127 })}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer', fontSize: 13,
+                    color: scene.flashMapping ? '#ffaa00' : '#3a3a3a',
+                    padding: '0 2px', lineHeight: 1, flexShrink: 0,
+                  }}
+                >⚡</button>
+              </div>
+              {scene.flashMapping && (
+                <div style={{ paddingLeft: 18 }}>
+                  <MappingEditor mapping={scene.flashMapping} onChange={(m) => handleFlashMapping(i, m)} />
+                </div>
+              )}
               </div>
             );
           })}

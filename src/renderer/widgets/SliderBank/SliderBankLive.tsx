@@ -88,7 +88,7 @@ export default function SliderBankLive({ widget }: { widget: SliderBankWidget })
               borderRadius: 4,
               overflow: 'hidden',
               touchAction: 'none',
-              cursor: isSlave ? 'context-menu' : 'pointer',
+              cursor: 'pointer',
               outline: isLearnTarget ? '2px solid #ff6600'
                 : isDragOver ? '2px solid #64c8ff'
                 : isSlave ? SLAVE_OUTLINE
@@ -97,7 +97,7 @@ export default function SliderBankLive({ widget }: { widget: SliderBankWidget })
             onPointerDown={(e) => {
               // Slaved cells are driven by the router — locked against manual drag.
               // Right-click → Unlink to free the fader.
-              if (isSlave) return;
+              // A router link is a second way in, not a lock.
               e.currentTarget.setPointerCapture(e.pointerId);
               const rect = e.currentTarget.getBoundingClientRect();
               const v = isVertical
@@ -107,7 +107,6 @@ export default function SliderBankLive({ widget }: { widget: SliderBankWidget })
               dispatchValue(cell?.mapping ?? widget.mapping, v);
             }}
             onPointerMove={(e) => {
-              if (isSlave) return;
               if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
               const rect = e.currentTarget.getBoundingClientRect();
               const v = isVertical
@@ -116,6 +115,7 @@ export default function SliderBankLive({ widget }: { widget: SliderBankWidget })
               setCellValue(widget.id, i, v);
               dispatchValue(cell?.mapping ?? widget.mapping, v);
             }}
+            data-lf-widget={widget.id} data-lf-cell={i}
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
