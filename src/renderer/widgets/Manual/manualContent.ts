@@ -81,9 +81,9 @@ export const SETTINGS_ENTRIES: ManualEntry[] = [
       ['Port name', 'Exact name of the input port, e.g. a Launchpad.'],
       ['List available ports', 'Scans and lists input ports.'],
       ['Extra input ports', 'Listen on more than one device at once.'],
-      ['Learn MIDI CC', 'Right-click any cell in Live mode and pick Learn — the next CC received becomes the INPUT for that cell.'],
-      ['Input vs output', 'A cell listens on one mapping and sends on another. Learning a physical fader does not touch where the cell sends, so a knob can take MIDI in and push OSC out. Right-click again to see what it is listening to, or to clear it.'],
-      ['Motorised faders', 'A cell with no separate input listens on its own output mapping, so MIDI in and MIDI out on the same CC still works as before.'],
+      ['Learn MIDI CC', 'Right-click any cell in Live mode and pick Learn. The next CC or note received becomes a Router row driving that cell.'],
+      ['Input vs output', 'Learn never touches where a cell SENDS, so a fader can take MIDI in and keep pushing OSC out. The binding is an ordinary Router row: visible in the router, undoable with right-click then Unlink, and captured by Cues along with the other links.'],
+      ['Any cell, any message', 'Because it routes rather than binding inside the widget, Learn works on cells whose widget has no MIDI listener of its own — a CC onto a button grid, or a submaster fader.'],
     ],
   },
   {

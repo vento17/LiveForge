@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand';
 import { nanoid } from 'nanoid';
 import type { StoreState } from './index';
-import type { Project, Page, Widget, Rect, WidgetKind, Connection, OutputProtocol, RouterWidget, RouterRow } from '../../shared/types/project';
+import type { Project, Page, Widget, Rect, WidgetKind, Connection, OutputProtocol, RouterWidget, RouterRow, RouterInputType } from '../../shared/types/project';
 import type { Mapping } from '../../shared/types/mapping';
 import { makeDefaultWidget, nextFreeCc, makeSliderCells, makeButtonCells, makeKnobCells, defaultMidiMapping, defaultOscMapping, widgetLabelNum } from '../widgets/defaults';
 
@@ -67,6 +67,9 @@ export interface LayoutSlice {
     slaveWidgetId: string; slaveCellIndex: number;
     sourceWidgetId: string; sourceCellIndex: number;
     routerId: string;
+    // A protocol source instead of a widget cell — this is how MIDI/OSC learn
+    // binds, so a learned controller is an ordinary router row like any other.
+    input?: { inputType: RouterInputType; midiChannel?: number; midiNumber?: number; oscAddress?: string };
   }) => void;
   unlinkSlaveCell: (slaveWidgetId: string, slaveCellIndex: number) => void;
   applyLinksSnapshot: (links: Record<string, RouterRow[]>) => void;
@@ -423,7 +426,7 @@ export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', neve
     touchUpdatedAt(s.project);
   }),
 
-  linkSlaveCell: ({ slaveWidgetId, slaveCellIndex, sourceWidgetId, sourceCellIndex, routerId }) => set((s) => {
+  linkSlaveCell: ({ slaveWidgetId, slaveCellIndex, sourceWidgetId, sourceCellIndex, routerId, input }) => set((s) => {
     const snapshot = JSON.parse(JSON.stringify(s.project)) as Project;
     s.projectHistory.push(snapshot);
     if (s.projectHistory.length > 50) s.projectHistory.shift();
@@ -448,9 +451,12 @@ export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', neve
 
     targetRouter.rows.push({
       id: nanoid(),
-      inputType: 'widget',
-      widgetId: sourceWidgetId,
-      cellIndex: sourceCellIndex,
+      inputType: input?.inputType ?? 'widget',
+      widgetId: input ? '' : sourceWidgetId,
+      cellIndex: input ? 0 : sourceCellIndex,
+      midiChannel: input?.midiChannel,
+      midiNumber: input?.midiNumber,
+      oscAddress: input?.oscAddress,
       outputs: [{
         id: nanoid(),
         mapping: null,

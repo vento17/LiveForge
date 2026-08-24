@@ -180,54 +180,95 @@ export default function GlobalBar(): React.JSX.Element {
   }, [midiClockEnabled, masterBpm]);
 
   // ─── Protocol Learn — capture next MIDI CC/note or OSC message ───────────
+  // A learned controller becomes an ordinary Router row driving the cell. That
+  // is the app's existing answer to "this input moves that cell", so learn gets
+  // everything the Router already does for free: it shows up in the router, it
+  // is visible and undoable through the right-click menu, Cues snapshot it, and
+  // it drives ANY cell — the per-widget MIDI listeners only understood their own
+  // message type, which is why learning a CC onto a button grid did nothing.
+  //
+  // Crucially it also leaves the cell's own mapping alone, so a fader can take
+  // MIDI in and keep sending OSC out.
   useEffect(() => {
     if (!midiLearnTarget) return;
     const protocol = midiLearnTarget.protocol ?? 'midi';
 
+    // The row needs a router to live in. Prefer one on the target's own page,
+    // else any router in the project, else make one.
+    function routerFor(pageId: string, widgetId: string): string | null {
+      const { project } = useStore.getState();
+      const ownPage = project.pages.find((p) => p.widgets.some((w) => w.id === widgetId))
+                   ?? project.pages.find((p) => p.id === pageId);
+      const onPage = ownPage?.widgets.find((w) => w.kind === 'router');
+      if (onPage) return onPage.id;
+      const anywhere = project.pages.flatMap((p) => p.widgets).find((w) => w.kind === 'router');
+      if (anywhere) return anywhere.id;
+      const host = ownPage?.id ?? pageId;
+      if (!host) return null;
+      const id = useStore.getState().addWidget(host, 'router');
+      const fresh = useStore.getState();
+      const page = fresh.project.pages.find((p) => p.id === host);
+      const created = page?.widgets.find((w) => w.id === id);
+      if (page && created) {
+        fresh.updateWidgetRect(host, id, {
+          x: Math.max(0, page.width - created.rect.width - 16),
+          y: Math.max(0, page.height - created.rect.height - 16),
+        });
+      }
+      return id;
+    }
+
+    function bind(t: NonNullable<typeof midiLearnTarget>, input: {
+      inputType: 'midiCC' | 'midiNote' | 'osc';
+      midiChannel?: number; midiNumber?: number; oscAddress?: string;
+    }) {
+      const routerId = routerFor(t.pageId, t.widgetId);
+      if (!routerId) return;
+      useStore.getState().linkSlaveCell({
+        slaveWidgetId: t.widgetId, slaveCellIndex: t.cellIndex,
+        sourceWidgetId: '', sourceCellIndex: 0,
+        routerId, input,
+      });
+      useStore.getState().setMidiLearnTarget(null);
+    }
+
     if (protocol === 'osc') {
-      const off = bridge.on('tr:osc:feedback', (msg) => {
+      return bridge.on('tr:osc:feedback', (msg) => {
         const t = useStore.getState().midiLearnTarget;
         if (!t || (t.protocol ?? 'midi') !== 'osc') return;
         const firstArg = msg.args[0];
         if (firstArg === 0 || firstArg === false) return; // ignore release events
-        const mapping: OscMapping = {
-          type: 'osc',
-          address: msg.address,
-          minValue: 0,
-          maxValue: 1,
-        };
-        // Learn binds where the cell LISTENS. It used to overwrite `mapping`,
-        // which is the OUTPUT — so learning a MIDI fader onto a cell that was
-        // sending OSC silently turned it into a MIDI sender and the OSC
-        // destination went dead.
-        const key = t.mappingKey ?? 'inputMapping';
-        useStore.getState().updateCell(t.pageId, t.widgetId, t.cellIndex, { [key]: mapping });
-        useStore.getState().setMidiLearnTarget(null);
+        // A non-cell target (an LFO play trigger, say) still learns a mapping.
+        if (t.mappingKey) {
+          const mapping: OscMapping = { type: 'osc', address: msg.address, minValue: 0, maxValue: 1 };
+          useStore.getState().updateCell(t.pageId, t.widgetId, t.cellIndex, { [t.mappingKey]: mapping });
+          useStore.getState().setMidiLearnTarget(null);
+          return;
+        }
+        bind(t, { inputType: 'osc', oscAddress: msg.address });
       });
-      return off;
-    } else {
-      const off = bridge.on('tr:midi:inputEvent', (evt) => {
-        const t = useStore.getState().midiLearnTarget;
-        if (!t) return;
-        if (evt.messageType !== 'controlChange' && evt.messageType !== 'noteOn') return;
+    }
+
+    return bridge.on('tr:midi:inputEvent', (evt) => {
+      const t = useStore.getState().midiLearnTarget;
+      if (!t) return;
+      if (evt.messageType !== 'controlChange' && evt.messageType !== 'noteOn') return;
+      if (t.mappingKey) {
         const mapping: MidiMapping = {
           type: 'midi',
           messageType: evt.messageType === 'controlChange' ? 'controlChange' : 'noteOn',
-          channel: evt.channel,
-          number: evt.number,
-          minValue: 0,
-          maxValue: 127,
+          channel: evt.channel, number: evt.number, minValue: 0, maxValue: 127,
         };
-        // Learn binds where the cell LISTENS. It used to overwrite `mapping`,
-        // which is the OUTPUT — so learning a MIDI fader onto a cell that was
-        // sending OSC silently turned it into a MIDI sender and the OSC
-        // destination went dead.
-        const key = t.mappingKey ?? 'inputMapping';
-        useStore.getState().updateCell(t.pageId, t.widgetId, t.cellIndex, { [key]: mapping });
+        useStore.getState().updateCell(t.pageId, t.widgetId, t.cellIndex, { [t.mappingKey]: mapping });
         useStore.getState().setMidiLearnTarget(null);
+        return;
+      }
+      bind(t, {
+        inputType: evt.messageType === 'controlChange' ? 'midiCC' : 'midiNote',
+        midiChannel: evt.channel,
+        midiNumber: evt.number,
       });
-      return off;
-    }
+    });
   }, [midiLearnTarget]);
 
   // ─── Keyboard shortcuts ───────────────────────────────────────────────────

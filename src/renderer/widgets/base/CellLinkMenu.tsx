@@ -16,16 +16,6 @@ interface Props {
 type View = 'root' | 'sources' | 'cells' | 'routers';
 
 
-// What this cell currently listens to, if anything.
-function describeInput(m: import('../../../shared/types/mapping').Mapping): string | null {
-  if (!m) return null;
-  if (m.type === 'midi') {
-    const kind = m.messageType === 'noteOn' || m.messageType === 'noteOff' ? 'note' : 'CC';
-    return `MIDI ch${m.channel} ${kind}${m.number}`;
-  }
-  if (m.type === 'osc') return `OSC ${m.address}`;
-  return m.type.toUpperCase();
-}
 
 export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Props): React.JSX.Element {
   const project = useStore((s) => s.project);
@@ -45,9 +35,6 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
   const [srcCellIndex, setSrcCellIndex] = useState<number>(0);
 
   const slaveLink = findSlaveLink(project, widgetId, cellIndex);
-  const thisWidget = project.pages.flatMap((p) => p.widgets).find((w) => w.id === widgetId);
-  const thisCell = (thisWidget as { cells?: { inputMapping?: import('../../../shared/types/mapping').Mapping }[] } | undefined)?.cells?.[cellIndex];
-  const boundInput = describeInput(thisCell?.inputMapping ?? null);
   const routers = listRouters(project);
   const srcWidget = project.pages.flatMap((p) => p.widgets).find((w) => w.id === srcWidgetId);
 
@@ -153,22 +140,6 @@ export default function CellLinkMenu({ x, y, widgetId, cellIndex, onClose }: Pro
           )}
 
           {(hasMidi || hasOsc) && <div style={dividerStyle} />}
-          {boundInput && (
-            <>
-              <div style={headerStyle}>
-                ⬤ listening to <span style={{ color: '#66cc99' }}>{boundInput}</span>
-              </div>
-              <button style={itemStyle('#ff6666')} onClick={() => {
-                const store = useStore.getState();
-                const pid = pageIdOfWidget(store.project, widgetId) ?? store.activePageId;
-                if (pid) store.updateCell(pid, widgetId, cellIndex, { inputMapping: null });
-                onClose();
-              }}>
-                ✕ Clear input
-              </button>
-              <div style={dividerStyle} />
-            </>
-          )}
           {isLearning ? (
             <button style={itemStyle('#ff6600')} onClick={() => { useStore.getState().setMidiLearnTarget(null); onClose(); }}>
               ⬤ Cancel Learn ({learnTarget?.protocol?.toUpperCase() ?? 'MIDI'})
