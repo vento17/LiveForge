@@ -414,7 +414,19 @@ export default function Canvas(): React.JSX.Element {
                     <WidgetPreview widget={widget} />
                     {isSingleSelected && (widget.kind === 'sliderBank' || widget.kind === 'buttonGrid' || widget.kind === 'knobBank') && (
                       <button
-                        style={styles.editBtn}
+                        style={{
+                          ...styles.editBtn,
+                          // The canvas is scaled, so a fixed size shrinks with the
+                          // zoom — at 49% a 44px target is 21px on screen. Undo the
+                          // canvas scale so the button stays a real finger target
+                          // whatever the zoom.
+                          transform: `scale(${1 / Math.max(scale, 0.05)})`,
+                          transformOrigin: 'top right',
+                        }}
+                        // On touch, react-rnd claims the press as the start of a
+                        // drag and the click never lands. Keep the press to
+                        // ourselves so the button actually fires.
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation();
                           setEditingWidgetId(widget.id);
@@ -529,11 +541,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   editBtn: {
     position: 'absolute', top: 4, right: 4,
-    background: 'rgba(0,0,0,0.7)',
+    background: 'rgba(0,0,0,0.85)',
     border: '1px solid var(--color-accent)',
     color: 'var(--color-accent)',
-    borderRadius: 4, padding: '2px 7px',
-    fontSize: 11, cursor: 'pointer', zIndex: 10,
+    borderRadius: 6, padding: '0 14px',
+    minHeight: 44, minWidth: 96,
+    fontSize: 15, fontWeight: 600, fontFamily: 'inherit',
+    cursor: 'pointer', zIndex: 10,
+    touchAction: 'manipulation',
   },
   scaleHint: {
     position: 'absolute', bottom: 8, right: 10,

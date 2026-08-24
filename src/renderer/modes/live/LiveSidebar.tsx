@@ -4,11 +4,13 @@ import type {
   Widget, LfoWidget, MathWidget, ValueDisplayWidget,
   StepSequencerWidget, GraphWidget, SoundPlayerWidget,
   SubmastersWidget, AudioAnalyserWidget, InstanceWidget, CuesWidget,
+  SliderBankWidget, ButtonGridWidget, KnobBankWidget,
   LfoWaveform, LfoRateMode, MathOperation, ValueDisplayFormat,
   SpeedMultiplier, GraphPlayMode, SubmasterMergeMode,
 } from '../../../shared/types/project';
 
 import { cueScopePages, cueScopeWidgets, widgetsInScope, CUE_SCOPE_ALL } from '../../widgets/Cues/scope';
+import CellEditModal from '../../widgets/base/CellEditModal';
 
 type UpdateFn = (patch: Record<string, unknown>) => void;
 
@@ -348,6 +350,33 @@ function InstanceParams({ w, update }: { w: InstanceWidget; update: UpdateFn }):
   );
 }
 
+
+function CellBankParams({ w, onEditCells }: {
+  w: SliderBankWidget | ButtonGridWidget | KnobBankWidget;
+  onEditCells: () => void;
+}): React.JSX.Element {
+  const cells = (w as { cells?: unknown[] }).cells?.length ?? 0;
+  return (
+    <>
+      <Row label="Cells">
+        <button
+          onClick={onEditCells}
+          style={{
+            width: '100%', minHeight: 32, cursor: 'pointer',
+            background: '#1a1a1a', border: '1px solid #2a2a2a',
+            color: '#bbb', borderRadius: 3, fontSize: 11, fontFamily: 'inherit',
+          }}
+        >
+          ✏ Edit cells ({cells})
+        </button>
+      </Row>
+      <div style={{ fontSize: 10, color: '#3a3a3a', padding: '2px 12px 8px', lineHeight: 1.5 }}>
+        Names, colours, mappings — and behaviour on a button grid — one cell at a time.
+      </div>
+    </>
+  );
+}
+
 function NoParams({ kind }: { kind: string }): React.JSX.Element {
   return (
     <div style={{ padding: '16px 12px', color: '#2a2a2a', fontSize: 11, fontFamily: 'monospace' }}>
@@ -356,8 +385,14 @@ function NoParams({ kind }: { kind: string }): React.JSX.Element {
   );
 }
 
-function ParamPanel({ widget, update }: { widget: Widget; update: UpdateFn }): React.JSX.Element {
+function ParamPanel({ widget, update, onEditCells }: {
+  widget: Widget; update: UpdateFn; onEditCells: () => void;
+}): React.JSX.Element {
   switch (widget.kind) {
+    case 'sliderBank':
+    case 'buttonGrid':
+    case 'knobBank':
+      return <CellBankParams w={widget as SliderBankWidget | ButtonGridWidget | KnobBankWidget} onEditCells={onEditCells} />;
     case 'lfoWidget':     return <LfoParams w={widget as LfoWidget} update={update} />;
     case 'mathWidget':    return <MathParams w={widget as MathWidget} update={update} />;
     case 'valueDisplay':  return <ValueDisplayParams w={widget as ValueDisplayWidget} update={update} />;
@@ -381,6 +416,10 @@ export default function LiveSidebar(): React.JSX.Element {
   const page = useActivePage();
 
   const widget = page?.widgets.find((w) => w.id === liveSelectedWidgetId) ?? null;
+  const [editingCells, setEditingCells] = React.useState(false);
+  // A widget deselected (or deleted) while the editor is open must not leave a
+  // modal pointing at nothing.
+  React.useEffect(() => { setEditingCells(false); }, [liveSelectedWidgetId]);
 
   const update: UpdateFn = (patch) => {
     if (activePageId && liveSelectedWidgetId) {
@@ -422,10 +461,18 @@ export default function LiveSidebar(): React.JSX.Element {
       {/* Param controls */}
       <div style={{ flex: 1 }}>
         {widget
-          ? <ParamPanel widget={widget} update={update} />
+          ? <ParamPanel widget={widget} update={update} onEditCells={() => setEditingCells(true)} />
           : null
         }
       </div>
+
+      {editingCells && widget && activePageId && (
+        <CellEditModal
+          widgetId={widget.id}
+          pageId={activePageId}
+          onClose={() => setEditingCells(false)}
+        />
+      )}
     </div>
   );
 }

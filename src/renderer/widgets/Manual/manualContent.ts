@@ -191,7 +191,7 @@ export const WIDGET_ENTRIES: ManualEntry[] = [
     items: [
       ['Count X / Y', 'How many faders, in columns and rows.'],
       ['Horizontal sliders', 'A tick in the Grid section lays the faders on their side — the travel becomes left-to-right. The layout changes, nothing is rotated, so labels and values stay upright and readable.'],
-      ['✏ Cells', 'Per-cell editor: label, colour, mapping and feedback rules. Tab walks down a column, so you can type all the names in one pass and all the addresses in the next.'],
+      ['✏ Cells', 'Per-cell editor: label, colour, mapping and feedback rules. Tab walks down a column, so you can type all the names in one pass and all the addresses in the next. Reachable from the button on the widget in Design mode, and from the Live sidebar when the bank is selected — so cells can be retuned mid-show.'],
       ['Drag', 'Sets the value. Each cell sends on its own mapping.'],
       ['Cell names', 'Default names carry the bank number — slider2 gets S2.1…S2.8 — so two banks side by side are never both "1". ↺ Reset names rebuilds them.'],
     ],
