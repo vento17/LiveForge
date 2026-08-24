@@ -167,6 +167,10 @@ export default function SoundPlayerLive({ widget }: { widget: SoundPlayerWidget 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [widget.id]);
 
+  // Like the Timeline, the sound player stands apart from the top-bar transport:
+  // Play, Stop and Reset up there do not touch it. Tracks are launched from
+  // their own buttons, from a cue, or from a router link.
+
   const color = widget.style.foregroundColor;
   const fs = widget.style.fontSize || 13;
 

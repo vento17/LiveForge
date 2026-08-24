@@ -48,6 +48,8 @@ export interface LayoutSlice {
   setConnection: (conn: Connection) => void;
   setTapTriggerMapping: (mapping: Mapping | null) => void;
   setResetTriggerMapping: (mapping: Mapping | null) => void;
+  setPlayTriggerMapping: (mapping: Mapping | null) => void;
+  setStopTriggerMapping: (mapping: Mapping | null) => void;
 
   addWidget: (pageId: string, kind: WidgetKind) => string;
   removeWidget: (pageId: string, widgetId: string) => void;
@@ -238,6 +240,18 @@ export const createLayoutSlice: StateCreator<StoreState, [['zustand/immer', neve
 
   setResetTriggerMapping: (mapping) => set((s) => {
     s.project.resetTriggerMapping = mapping;
+    touchUpdatedAt(s.project);
+  }),
+
+
+  setPlayTriggerMapping: (mapping) => set((s) => {
+    s.project.playTriggerMapping = mapping;
+    touchUpdatedAt(s.project);
+  }),
+
+
+  setStopTriggerMapping: (mapping) => set((s) => {
+    s.project.stopTriggerMapping = mapping;
     touchUpdatedAt(s.project);
   }),
 

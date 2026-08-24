@@ -11,7 +11,7 @@ import {
   WIDGET_ENTRIES as MANUAL_WIDGET_ENTRIES,
 } from '../../../widgets/Manual/manualContent';
 import { keyCapLabel, RESERVED_CODES } from '../../../widgets/Keyboard/keyNames';
-import { cellLabel } from '../../../widgets/base/links';
+import { cellLabel, sourceCells, listLinkableSources } from '../../../widgets/base/links';
 import NumberInput from '../../../widgets/base/NumberInput';
 import { cueScopePages, cueScopeWidgets, widgetsInScope, CUE_SCOPE_ALL } from '../../../widgets/Cues/scope';
 import { nextFreeCc } from '../../../widgets/defaults';
@@ -1626,7 +1626,7 @@ const RESOLUTION_PRESETS = [
 function SettingsPanel() {
   const project = useProject();
   const page = useActivePage();
-  const { setProjectName, setProjectFrameRate, setConnection, setPageSize, setPageLiveOffset, setTapTriggerMapping, setResetTriggerMapping, setConnectedProtocol, connectedProtocols } = useStore((s) => ({
+  const { setProjectName, setProjectFrameRate, setConnection, setPageSize, setPageLiveOffset, setTapTriggerMapping, setResetTriggerMapping, setPlayTriggerMapping, setStopTriggerMapping, setConnectedProtocol, connectedProtocols } = useStore((s) => ({
     setProjectName:          s.setProjectName,
     setProjectFrameRate:     s.setProjectFrameRate,
     setConnection:           s.setConnection,
@@ -1634,6 +1634,8 @@ function SettingsPanel() {
     setPageLiveOffset:       s.setPageLiveOffset,
     setTapTriggerMapping:    s.setTapTriggerMapping,
     setResetTriggerMapping:  s.setResetTriggerMapping,
+    setPlayTriggerMapping:   s.setPlayTriggerMapping,
+    setStopTriggerMapping:   s.setStopTriggerMapping,
     setConnectedProtocol:    s.setConnectedProtocol,
     connectedProtocols:      s.connectedProtocols,
   }));
@@ -1679,6 +1681,27 @@ function SettingsPanel() {
 
   const tapMapping    = project.tapTriggerMapping;
   const resetMapping  = project.resetTriggerMapping;
+  const playMapping   = project.playTriggerMapping ?? null;
+  const stopMapping   = project.stopTriggerMapping ?? null;
+
+  // Same shape as tap/reset above, for the other two transport buttons.
+  const mappingType = (m: Mapping | null): string =>
+    !m                                                    ? 'none'
+    : m.type === 'osc'                                    ? 'osc'
+    : (m as MidiMapping).messageType === 'controlChange'  ? 'midi-cc'
+    :                                                       'midi-note';
+
+  function transportTypeChange(
+    t: string,
+    set: (m: Mapping | null) => void,
+    address: string,
+    note: number,
+  ) {
+    if (t === 'none')           set(null);
+    else if (t === 'osc')       set({ type: 'osc', address });
+    else if (t === 'midi-cc')   set({ type: 'midi', messageType: 'controlChange', channel: 1, number: note, minValue: 0, maxValue: 127 });
+    else if (t === 'midi-note') set({ type: 'midi', messageType: 'noteOn',        channel: 1, number: note, minValue: 0, maxValue: 127 });
+  }
 
   const tapType: string =
     !tapMapping                                                           ? 'none'
@@ -1982,6 +2005,18 @@ function SettingsPanel() {
             </Field>
           </>
         )}
+
+        <TransportTrigger
+          label="Play source" hint="None (play button only)"
+          mapping={playMapping} set={setPlayTriggerMapping}
+          type={mappingType(playMapping)}
+          onType={(t) => transportTypeChange(t, setPlayTriggerMapping, '/play', 38)} />
+
+        <TransportTrigger
+          label="Stop source" hint="None (stop button only)"
+          mapping={stopMapping} set={setStopTriggerMapping}
+          type={mappingType(stopMapping)}
+          onType={(t) => transportTypeChange(t, setStopTriggerMapping, '/stop', 39)} />
       </CollapsibleSection>
 
       <div style={{ borderTop: '1px solid var(--color-border)', margin: '4px 0 16px' }} />
@@ -3028,7 +3063,7 @@ function RouterOutputEditor({ output, onChange, onRemove }: {
   onChange: (updated: Partial<RouterOutput>) => void;
   onRemove: () => void;
 }) {
-  const activePage = useActivePage();
+  const project = useProject();
   const mode = output.targetWidgetId != null ? 'widget' : (output.mapping?.type ?? '');
 
   function handleModeChange(p: string) {
@@ -3048,22 +3083,12 @@ function RouterOutputEditor({ output, onChange, onRemove }: {
   function pm(partial: Partial<Mapping & object>) { onChange({ mapping: { ...output.mapping!, ...partial } as Mapping }); }
 
   // Widget cell target: compute available target widgets and their cells
-  const targetWidgets = activePage?.widgets.filter((w) =>
-    ['sliderBank', 'buttonGrid', 'knobBank', 'xyPad', 'stepSequencer', 'graphWidget', 'soundPlayer'].includes(w.kind)
-  ) ?? [];
-  const targetWidget = activePage?.widgets.find((w) => w.id === output.targetWidgetId);
+  const targetGroups = listLinkableSources(project);
+  const allWidgets = project.pages.flatMap((pg) => pg.widgets);
+  const targetWidget = allWidgets.find((w) => w.id === output.targetWidgetId);
   function getTargetCells(widgetId: string): { index: number; label: string }[] {
-    const w = activePage?.widgets.find((x) => x.id === widgetId);
-    if (!w) return [];
-    if (w.kind === 'xyPad') return [{ index: 0, label: 'X' }, { index: 1, label: 'Y' }];
-    if (w.kind === 'stepSequencer' || w.kind === 'graphWidget') return [{ index: 0, label: 'value' }];
-    if (w.kind === 'soundPlayer') {
-      return w.tracks.map((t, i) => ({ index: i, label: t.label || t.fileName || `Track ${i + 1}` }));
-    }
-    if ('cells' in w && Array.isArray(w.cells)) {
-      return (w.cells as { label?: string }[]).map((c, i) => ({ index: i, label: c.label || `#${i + 1}` }));
-    }
-    return [{ index: 0, label: 'value' }];
+    const w = allWidgets.find((x) => x.id === widgetId);
+    return w ? sourceCells(w) : [];
   }
 
   return (
@@ -3088,7 +3113,11 @@ function RouterOutputEditor({ output, onChange, onRemove }: {
             onChange={(e) => onChange({ targetWidgetId: e.target.value, targetCellIndex: 0 })}
           >
             <option value="">— widget —</option>
-            {targetWidgets.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+            {targetGroups.map((g) => (
+              <optgroup key={g.pageId} label={g.pageName}>
+                {g.widgets.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+              </optgroup>
+            ))}
           </select>
           <select
             style={{ ...styles.input, flex: 1, fontSize: 12 }}
@@ -3194,44 +3223,19 @@ function RouterInspectorPanel({ widget, activePageId, updateWidget, updateWidget
   updateWidget: StoreState['updateWidget'];
   updateWidgetRect: StoreState['updateWidgetRect'];
 }) {
-  const activePage = useActivePage();
+  const project = useProject();
 
   function patch(partial: Partial<RouterWidget>) { updateWidget(activePageId, widget.id, partial as never); }
   function patchStyle(p: Partial<typeof widget.style>) { patch({ style: { ...widget.style, ...p } }); }
 
-  const inputWidgets = activePage?.widgets.filter((w) =>
-    ['sliderBank', 'buttonGrid', 'knobBank', 'xyPad', 'stepSequencer', 'graphWidget',
-     'autoBpm', 'timeline', 'audioAnalyser', 'soundPlayer'].includes(w.kind)
-  ) ?? [];
+  // Every widget that has cells, on every page — the same set the right-click
+  // link menu offers, so the two cannot disagree about what can be routed.
+  const inputGroups = listLinkableSources(project);
+  const allWidgets = project.pages.flatMap((pg) => pg.widgets);
 
   function getCells(widgetId: string): { index: number; label: string }[] {
-    const w = activePage?.widgets.find((x) => x.id === widgetId);
-    if (!w) return [];
-    if (w.kind === 'xyPad') return [{ index: 0, label: 'X' }, { index: 1, label: 'Y' }];
-    if (w.kind === 'stepSequencer' || w.kind === 'graphWidget') return [{ index: 0, label: 'value' }];
-    if (w.kind === 'autoBpm') {
-      return [
-        ...BEAT_DIVISORS.map((D, i) => ({ index: i, label: `trig ×${D}` })),
-        ...BEAT_DIVISORS.map((D, i) => ({ index: 8 + i, label: `ramp ×${D}` })),
-      ];
-    }
-    if (w.kind === 'timeline') {
-      return w.tracks.map((t, i) => ({ index: i, label: `${t.kind}: ${t.label}` }));
-    }
-    if (w.kind === 'audioAnalyser') {
-      return [
-        ...['kick', 'snare', 'bass', 'mid', 'high'].map((lbl, i) => ({ index: i, label: lbl })),
-        ...BEAT_DIVISORS.map((D, i) => ({ index: 5 + i, label: `trig ×${D}` })),
-        ...BEAT_DIVISORS.map((D, i) => ({ index: 13 + i, label: `ramp ×${D}` })),
-      ];
-    }
-    if (w.kind === 'soundPlayer') {
-      return w.tracks.map((t, i) => ({ index: i, label: t.label || t.fileName || `Track ${i + 1}` }));
-    }
-    if ('cells' in w && Array.isArray(w.cells)) {
-      return (w.cells as { label?: string }[]).map((c, i) => ({ index: i, label: c.label || `#${i + 1}` }));
-    }
-    return [{ index: 0, label: 'value' }];
+    const w = allWidgets.find((x) => x.id === widgetId);
+    return w ? sourceCells(w) : [];
   }
 
   function addRow() {
@@ -3333,8 +3337,10 @@ function RouterInspectorPanel({ widget, activePageId, updateWidget, updateWidget
                     onChange={(e) => updateRow(row.id, { widgetId: e.target.value, cellIndex: 0 })}
                   >
                     <option value="">— widget —</option>
-                    {inputWidgets.map((w) => (
-                      <option key={w.id} value={w.id}>{w.label}</option>
+                    {inputGroups.map((g) => (
+                      <optgroup key={g.pageId} label={g.pageName}>
+                        {g.widgets.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+                      </optgroup>
                     ))}
                   </select>
                   <select
@@ -4721,3 +4727,51 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 4,
   },
 };
+
+
+// ─── Transport trigger row ────────────────────────────────────────────────────
+// Play and Stop, sharing one block. Tap and Reset predate it and are still
+// written out longhand above.
+
+function TransportTrigger({ label, hint, mapping, set, type, onType }: {
+  label: string;
+  hint: string;
+  mapping: Mapping | null;
+  set: (m: Mapping | null) => void;
+  type: string;
+  onType: (t: string) => void;
+}) {
+  return (
+    <>
+      <Field label={label}>
+        <select style={styles.input} value={type} onChange={(e) => onType(e.target.value)}>
+          <option value="none">{hint}</option>
+          <option value="osc">OSC message</option>
+          <option value="midi-cc">MIDI CC</option>
+          <option value="midi-note">MIDI Note</option>
+        </select>
+      </Field>
+      {mapping?.type === 'osc' && (
+        <Field label="OSC address">
+          <input style={styles.input}
+            value={(mapping as OscMapping).address}
+            onChange={(e) => set({ ...(mapping as OscMapping), address: e.target.value })} />
+        </Field>
+      )}
+      {mapping?.type === 'midi' && (
+        <>
+          <Field label="Channel">
+            <NumInput
+              value={(mapping as MidiMapping).channel}
+              onChange={(v) => set({ ...(mapping as MidiMapping), channel: Math.max(1, Math.min(16, v)) })} />
+          </Field>
+          <Field label={(mapping as MidiMapping).messageType === 'noteOn' ? 'Note' : 'CC'}>
+            <NumInput
+              value={(mapping as MidiMapping).number}
+              onChange={(v) => set({ ...(mapping as MidiMapping), number: Math.max(0, Math.min(127, v)) })} />
+          </Field>
+        </>
+      )}
+    </>
+  );
+}

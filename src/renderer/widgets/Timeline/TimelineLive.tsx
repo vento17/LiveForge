@@ -1395,6 +1395,10 @@ export default function TimelineLive({ widget }: { widget: TimelineWidget }): Re
   const stopPbRef   = useRef(stopPlayback);  stopPbRef.current   = stopPlayback;
   const isPlayingRef = useRef(isPlaying);    isPlayingRef.current = isPlaying;
 
+  // The timeline stands apart from the top-bar transport: Play, Stop and Reset
+  // up there do not touch it. A show runs from its own transport, so putting the
+  // desk into play (or stopping it) cannot start, halt or rewind the show.
+
   function goToStart() { stopPlayback(); setCurrentTime(0); }
   function goToEnd()   { stopPlayback(); setCurrentTime(widget.duration); }
 

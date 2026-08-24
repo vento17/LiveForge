@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useStore, useMode, useIsLocked, useProject, useActivePageId } from '../store';
-import type { MidiMapping, OscMapping } from '../../shared/types/mapping';
+import type { Mapping, MidiMapping, OscMapping } from '../../shared/types/mapping';
 import { bridge } from '../ipc/bridge';
 import { AutoBpmService } from '../audio/AutoBpmService';
 import { listRouters } from '../widgets/base/links';
@@ -55,7 +55,7 @@ export default function GlobalBar(): React.JSX.Element {
     setMode, loadProject, toggleLock,
     openWidgetPicker, openSettings, closeSettings, isSettingsOpen,
     masterBpm, setMasterBpm,
-    isGlobalPlaying, setGlobalPlaying, triggerGlobalPlay,
+    isGlobalPlaying, triggerGlobalPlay, triggerGlobalStop,
     addPage, removePage, reorderPages, setActivePageId,
     bpmMode, setBpmMode, autoBpmConfig, setAutoBpmConfig,
     autoBpmStatus, autoBpmAudioDeviceId, setAutoBpmAudioDeviceId, autoBpmError, setAutoBpmError,
@@ -73,8 +73,8 @@ export default function GlobalBar(): React.JSX.Element {
     masterBpm:               s.masterBpm,
     setMasterBpm:            s.setMasterBpm,
     isGlobalPlaying:         s.isGlobalPlaying,
-    setGlobalPlaying:        s.setGlobalPlaying,
     triggerGlobalPlay:       s.triggerGlobalPlay,
+    triggerGlobalStop:       s.triggerGlobalStop,
     addPage:                 s.addPage,
     removePage:              s.removePage,
     reorderPages:            s.reorderPages,
@@ -132,11 +132,15 @@ export default function GlobalBar(): React.JSX.Element {
 
   const tapMappingRef      = useRef(project.tapTriggerMapping);
   const resetMappingRef    = useRef(project.resetTriggerMapping);
+  const playMappingRef     = useRef(project.playTriggerMapping ?? null);
+  const stopMappingRef     = useRef(project.stopTriggerMapping ?? null);
   const flashTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resetFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   tapMappingRef.current   = project.tapTriggerMapping;
   resetMappingRef.current = project.resetTriggerMapping;
+  playMappingRef.current  = project.playTriggerMapping ?? null;
+  stopMappingRef.current  = project.stopTriggerMapping ?? null;
 
   useEffect(() => { setBpmInput(String(masterBpm)); }, [masterBpm]);
 
@@ -355,22 +359,115 @@ export default function GlobalBar(): React.JSX.Element {
     if (isCC || isNote) tapRef.current();
   }), []);
 
-  // OSC reset
-  useEffect(() => bridge.on('tr:osc:feedback', (msg) => {
-    const m = resetMappingRef.current;
-    if (!m || m.type !== 'osc') return;
-    if (msg.address === (m as OscMapping).address) resetRef.current();
-  }), []);
+  // ── Learn on the transport buttons ────────────────────────────────────────
+  // Setting these from the Settings dropdowns means knowing the CC number by
+  // heart. Right-clicking the button itself and pressing the pad is how every
+  // other mapping in the app is made, so these work the same way.
+  type TransportKey = 'reset' | 'play' | 'stop';
+  const [tMenu, setTMenu] = useState<{ key: TransportKey; x: number; y: number } | null>(null);
+  const [tLearn, setTLearn] = useState<{ key: TransportKey; protocol: 'midi' | 'osc' } | null>(null);
 
-  // MIDI reset
-  useEffect(() => bridge.on('tr:midi:inputEvent', (evt) => {
-    const m = resetMappingRef.current;
-    if (!m || m.type !== 'midi') return;
-    const mm = m as MidiMapping;
-    const isCC   = mm.messageType === 'controlChange' && evt.messageType === 'controlChange' && evt.channel === mm.channel && evt.number === mm.number;
-    const isNote = mm.messageType === 'noteOn'        && evt.messageType === 'noteOn'        && evt.channel === mm.channel && evt.number === mm.number;
-    if (isCC || isNote) resetRef.current();
-  }), []);
+  const setTransportMapping = (key: TransportKey, m: Mapping | null) => {
+    const st = useStore.getState();
+    if (key === 'reset') st.setResetTriggerMapping(m);
+    else if (key === 'play') st.setPlayTriggerMapping(m);
+    else st.setStopTriggerMapping(m);
+  };
+  const transportMapping = (key: TransportKey): Mapping | null =>
+    key === 'reset' ? project.resetTriggerMapping
+    : key === 'play' ? (project.playTriggerMapping ?? null)
+    : (project.stopTriggerMapping ?? null);
+
+  useEffect(() => {
+    if (!tMenu) return;
+    const close = () => setTMenu(null);
+    const t = setTimeout(() => document.addEventListener('pointerdown', close), 0);
+    return () => { clearTimeout(t); document.removeEventListener('pointerdown', close); };
+  }, [tMenu]);
+
+  useEffect(() => {
+    if (!tLearn) return;
+    const { key, protocol } = tLearn;
+    if (protocol === 'osc') {
+      return bridge.on('tr:osc:feedback', (msg) => {
+        const first = msg.args[0];
+        if (first === 0 || first === false) return;   // ignore the release half
+        setTransportMapping(key, { type: 'osc', address: msg.address });
+        setTLearn(null);
+      });
+    }
+    return bridge.on('tr:midi:inputEvent', (evt) => {
+      if (evt.messageType !== 'controlChange' && evt.messageType !== 'noteOn') return;
+      if (evt.messageType === 'noteOn' && evt.value === 0) return;
+      setTransportMapping(key, {
+        type: 'midi',
+        messageType: evt.messageType === 'controlChange' ? 'controlChange' : 'noteOn',
+        channel: evt.channel, number: evt.number, minValue: 0, maxValue: 127,
+      });
+      setTLearn(null);
+    });
+  }, [tLearn]);
+
+  // Esc cancels an armed transport learn.
+  useEffect(() => {
+    if (!tLearn) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setTLearn(null); };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [tLearn]);
+
+  function transportTitle(key: TransportKey, base: string): string {
+    if (tLearn?.key === key) return `${base} — learning ${tLearn.protocol.toUpperCase()}, send it now (Esc cancels)`;
+    const m = transportMapping(key);
+    const desc = !m ? 'not mapped'
+      : m.type === 'osc' ? `OSC ${(m as OscMapping).address}`
+      : `MIDI ch${(m as MidiMapping).channel} ${(m as MidiMapping).messageType === 'noteOn' ? 'note' : 'cc'}${(m as MidiMapping).number}`;
+    return `${base} — ${desc}. Right-click to learn.`;
+  }
+
+  const transportCtx = (key: TransportKey) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setTMenu({ key, x: e.clientX, y: e.clientY });
+  };
+
+  // ── Transport triggers: reset, play and stop ──────────────────────────────
+  // All three top-bar buttons can be driven from a controller. The matching is
+  // written once so play and stop cannot drift from the reset behaviour.
+  const playRef = useRef<() => void>(null!);
+  const stopRef = useRef<() => void>(null!);
+  playRef.current = () => triggerGlobalPlay();
+  stopRef.current = () => triggerGlobalStop();
+
+  useEffect(() => {
+    const targets: [React.MutableRefObject<Mapping | null>, React.MutableRefObject<() => void>][] = [
+      [resetMappingRef, resetRef],
+      [playMappingRef,  playRef],
+      [stopMappingRef,  stopRef],
+    ];
+
+    const offOsc = bridge.on('tr:osc:feedback', (msg) => {
+      for (const [mapRef, fire] of targets) {
+        const m = mapRef.current;
+        if (!m || m.type !== 'osc') continue;
+        if (msg.address === (m as OscMapping).address) fire.current();
+      }
+    });
+
+    const offMidi = bridge.on('tr:midi:inputEvent', (evt) => {
+      for (const [mapRef, fire] of targets) {
+        const m = mapRef.current;
+        if (!m || m.type !== 'midi') continue;
+        const mm = m as MidiMapping;
+        const isCC   = mm.messageType === 'controlChange' && evt.messageType === 'controlChange' && evt.channel === mm.channel && evt.number === mm.number;
+        // A note-off carries velocity 0; firing on it would double-trigger.
+        const isNote = mm.messageType === 'noteOn'        && evt.messageType === 'noteOn'        && evt.channel === mm.channel && evt.number === mm.number && evt.value > 0;
+        if (isCC || isNote) fire.current();
+      }
+    });
+
+    return () => { offOsc(); offMidi(); };
+  }, []);
 
   async function handleSave() {
     await bridge.invoke('tr:project:save', project);
@@ -560,27 +657,77 @@ export default function GlobalBar(): React.JSX.Element {
           );
         })()}
 
+        {/* Transport learn menu */}
+        {tMenu && (() => {
+          const item: React.CSSProperties = {
+            display: 'block', width: '100%', minHeight: 38, padding: '9px 16px',
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 14, color: '#ccc', textAlign: 'left', fontFamily: 'monospace',
+          };
+          const cur = transportMapping(tMenu.key);
+          return (
+            <div
+              style={{
+                position: 'fixed', left: Math.min(tMenu.x, window.innerWidth - 260), top: tMenu.y,
+                zIndex: 9999, background: '#1a1a1a', border: '1px solid #3a3a3a',
+                borderRadius: 6, padding: '6px 0', minWidth: 250,
+                boxShadow: '0 6px 28px rgba(0,0,0,0.75)',
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <div style={{ padding: '8px 16px', color: '#8a8a8a', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>
+                {tMenu.key}
+              </div>
+              <div style={{ height: 1, background: '#3a3a3a', margin: '4px 0' }} />
+              <button style={item} onClick={() => { setTLearn({ key: tMenu.key, protocol: 'midi' }); setTMenu(null); }}>
+                ⬤ Learn MIDI
+              </button>
+              <button style={item} onClick={() => { setTLearn({ key: tMenu.key, protocol: 'osc' }); setTMenu(null); }}>
+                ⬤ Learn OSC
+              </button>
+              {cur && (
+                <>
+                  <div style={{ height: 1, background: '#3a3a3a', margin: '4px 0' }} />
+                  <button style={{ ...item, color: '#ff6666' }}
+                    onClick={() => { setTransportMapping(tMenu.key, null); setTMenu(null); }}>
+                    ✕ Clear mapping
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Right spacer */}
         <div style={{ flex: 1 }} />
 
         {/* Reset — a second instance of the BPM-row ↺, up here at play/stop size
             so it can be hit without looking down at the smaller strip. */}
         <button
-          style={{ ...styles.tapBtn, minWidth: 30, ...(resetFlash ? styles.resetBtnFlash : {}) }}
-          title="Reset tap averaging and all widgets"
-          onPointerDown={(e) => { e.preventDefault(); resetRef.current(); }}
+          style={{ ...styles.tapBtn, minWidth: 30,
+            ...(resetFlash ? styles.resetBtnFlash : {}),
+            ...(tLearn?.key === 'reset' ? styles.learnArmed : {}) }}
+          title={transportTitle('reset', 'Reset all widgets to their start point')}
+          onContextMenu={transportCtx('reset')}
+          onPointerDown={(e) => { if (e.button !== 0) return; e.preventDefault(); resetRef.current(); }}
         >↺</button>
 
         {/* Global play / stop */}
         <button
-          style={{ ...styles.tapBtn, minWidth: 30, ...(!isGlobalPlaying ? { background: 'var(--color-accent)', border: '1px solid var(--color-accent)', color: '#000' } : {}) }}
-          title="Play / restart all tempo widgets"
-          onPointerDown={(e) => { e.preventDefault(); triggerGlobalPlay(); }}
+          style={{ ...styles.tapBtn, minWidth: 30,
+            ...(!isGlobalPlaying ? { background: 'var(--color-accent)', border: '1px solid var(--color-accent)', color: '#000' } : {}),
+            ...(tLearn?.key === 'play' ? styles.learnArmed : {}) }}
+          title={transportTitle('play', 'Play all widgets from the top')}
+          onContextMenu={transportCtx('play')}
+          onPointerDown={(e) => { if (e.button !== 0) return; e.preventDefault(); triggerGlobalPlay(); }}
         >▶</button>
         <button
-          style={{ ...styles.tapBtn, minWidth: 30, ...(isGlobalPlaying ? { background: 'rgba(255,80,80,0.18)', border: '1px solid rgba(255,80,80,0.5)', color: 'rgba(255,130,130,1)' } : { opacity: 0.45 }) }}
-          title="Stop all tempo widgets"
-          onPointerDown={(e) => { e.preventDefault(); setGlobalPlaying(false); }}
+          style={{ ...styles.tapBtn, minWidth: 30,
+            ...(isGlobalPlaying ? { background: 'rgba(255,80,80,0.18)', border: '1px solid rgba(255,80,80,0.5)', color: 'rgba(255,130,130,1)' } : { opacity: 0.45 }),
+            ...(tLearn?.key === 'stop' ? styles.learnArmed : {}) }}
+          title={transportTitle('stop', 'Stop all widgets')}
+          onContextMenu={transportCtx('stop')}
+          onPointerDown={(e) => { if (e.button !== 0) return; e.preventDefault(); triggerGlobalStop(); }}
         >■</button>
 
         <div style={styles.sep} />
@@ -1162,6 +1309,11 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--color-accent-dim)',
     border: '1px solid var(--color-accent)',
     color: 'var(--color-accent)',
+  },
+  learnArmed: {
+    background: '#ff8c00',
+    border: '1px solid #ff8c00',
+    color: '#000',
   },
   btnDisabled: {
     opacity: 0.3,

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { StepSequencerWidget, SpeedMultiplier } from '../../../shared/types/project';
 import type { Mapping } from '../../../shared/types/mapping';
+import { useGlobalTransport } from '../base/useGlobalTransport';
 import { useStore } from '../../store';
 import { dispatchValue } from '../../ipc/dispatch';
 
@@ -21,13 +22,10 @@ function fmtValue(normalized: number, mapping: Mapping): string {
 }
 
 export default function StepSequencerLive({ widget }: { widget: StepSequencerWidget }): React.JSX.Element {
-  const { activePageId, updateWidget, masterBpm, isGlobalPlaying, globalResetTick, globalPlayTick } = useStore((s) => ({
+  const { activePageId, updateWidget, masterBpm } = useStore((s) => ({
     activePageId:     s.activePageId,
     updateWidget:     s.updateWidget,
     masterBpm:        s.masterBpm,
-    isGlobalPlaying:  s.isGlobalPlaying,
-    globalResetTick:  s.globalResetTick,
-    globalPlayTick:   s.globalPlayTick,
   }));
 
   const color = widget.style.foregroundColor;
@@ -209,24 +207,16 @@ export default function StepSequencerLive({ widget }: { widget: StepSequencerWid
   startPlayingRef.current = startPlaying;
   stopPlayingRef.current  = stopPlaying;
 
-  useEffect(() => {
-    if (isGlobalPlaying) startPlayingRef.current();
-    else stopPlayingRef.current();
-  }, [isGlobalPlaying]);
-
-  // globalPlayTick: force-restart even if already playing
-  useEffect(() => {
-    if (globalPlayTick === 0) return;
-    stopPlayingRef.current();
-    startPlayingRef.current();
-  }, [globalPlayTick]);
-
-  useEffect(() => {
-    if (globalResetTick === 0) return;
-    const wasPlaying = isPlayingRef.current;
-    stopPlayingRef.current();
-    if (wasPlaying) startPlayingRef.current();
-  }, [globalResetTick]);
+  useGlobalTransport({
+    start: () => startPlayingRef.current(),
+    stop:  () => stopPlayingRef.current(),
+    // Restarting IS the way back to step one for this widget.
+    reset: () => {
+      const wasPlaying = isPlayingRef.current;
+      stopPlayingRef.current();
+      if (wasPlaying) startPlayingRef.current();
+    },
+  });
 
 
   // ─── Transport ↔ store ──────────────────────────────────────────────────────

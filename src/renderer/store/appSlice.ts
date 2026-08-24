@@ -51,6 +51,7 @@ export interface AppSlice {
   isGlobalPlaying: boolean;
   globalResetTick: number;
   globalPlayTick: number;
+  globalStopTick: number;
   connectedProtocols: Record<string, boolean>;
 
   // MIDI Clock
@@ -106,6 +107,7 @@ export interface AppSlice {
   setGlobalPlaying: (playing: boolean) => void;
   triggerGlobalReset: () => void;
   triggerGlobalPlay: () => void;
+  triggerGlobalStop: () => void;
   setConnectedProtocol: (key: string, connected: boolean) => void;
   setMidiClockEnabled: (enabled: boolean) => void;
   setMidiLearnTarget: (target: MidiLearnTarget | null) => void;
@@ -137,6 +139,7 @@ export const createAppSlice: StateCreator<StoreState, [['zustand/immer', never]]
   isGlobalPlaying: false,
   globalResetTick: 0,
   globalPlayTick: 0,
+  globalStopTick: 0,
   connectedProtocols: {},
   midiClockEnabled: false,
   midiLearnTarget: null,
@@ -202,6 +205,7 @@ export const createAppSlice: StateCreator<StoreState, [['zustand/immer', never]]
   setGlobalPlaying: (playing) => set((s) => { s.isGlobalPlaying = playing; }),
   triggerGlobalReset: () => set((s) => { s.globalResetTick += 1; s.tapTimes = []; }),
   triggerGlobalPlay:  () => set((s) => { s.globalPlayTick  += 1; s.isGlobalPlaying = true; }),
+  triggerGlobalStop:  () => set((s) => { s.globalStopTick  += 1; s.isGlobalPlaying = false; }),
   setConnectedProtocol: (key, connected) => set((s) => {
     if (connected) s.connectedProtocols[key] = true;
     else delete s.connectedProtocols[key];

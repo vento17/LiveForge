@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { LfoWidget } from '../../../shared/types/project';
 import type { MidiMapping, OscMapping } from '../../../shared/types/mapping';
+import { useGlobalTransport } from '../base/useGlobalTransport';
 import { useStore } from '../../store';
 import { dispatchValue } from '../../ipc/dispatch';
 import { bridge } from '../../ipc/bridge';
@@ -19,8 +20,6 @@ function computeLfoValue(waveform: string, phase: number): number {
 
 export default function LfoWidgetLive({ widget }: { widget: LfoWidget }): React.JSX.Element {
   const masterBpm      = useStore((s) => s.masterBpm);
-  const globalResetTick = useStore((s) => s.globalResetTick);
-  const globalPlayTick  = useStore((s) => s.globalPlayTick);
 
   const masterBpmRef = useRef(masterBpm);
   masterBpmRef.current = masterBpm;
@@ -106,11 +105,20 @@ export default function LfoWidgetLive({ widget }: { widget: LfoWidget }): React.
     return () => cancelAnimationFrame(rafId);
   }, []);
 
-  useEffect(() => {
+  function rewind() {
     accBeatsRef.current = 0;
     lastNowRef.current = performance.now();
     lastRandomPhaseFloorRef.current = -1;
-  }, [globalResetTick, globalPlayTick]);
+  }
+  const rewindRef = useRef(rewind); rewindRef.current = rewind;
+  const startRefG = useRef(startPlaying); startRefG.current = startPlaying;
+  const stopRefG  = useRef(stopPlaying);  stopRefG.current  = stopPlaying;
+
+  useGlobalTransport({
+    start: () => startRefG.current(),
+    stop:  () => stopRefG.current(),
+    reset: () => rewindRef.current(),
+  });
 
   // Play/stop triggers (OSC + MIDI)
   useEffect(() => bridge.on('tr:osc:feedback', (msg) => {

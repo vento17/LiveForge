@@ -441,29 +441,36 @@ export default function AudioAnalyserLive({ widget }: { widget: AudioAnalyserWid
 
   const bg = widget.style.backgroundColor || '#060608';
   const borderB: React.CSSProperties = { borderBottom: '1px solid #1a1a1a' };
-  const hdr: React.CSSProperties = { fontSize: 7, color: '#2e2e2e', letterSpacing: 1, flexShrink: 0, marginBottom: 2 };
+  // Same base size the Router uses, with everything below derived from it. The
+  // readouts used to be near-black on near-black at 8px: those numbers are the
+  // point of the widget and could not be read from more than a foot away.
+  const fs = widget.style.fontSize || 13;
+  const hdr: React.CSSProperties = { fontSize: Math.max(9, fs - 4), color: '#5a5a5a',
+    letterSpacing: 1, flexShrink: 0, marginBottom: 3 };
+  const readout: React.CSSProperties = { fontSize: fs - 1, color: '#b0b0b0',
+    width: fs * 2.8, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' };
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-      boxSizing: 'border-box', overflow: 'hidden', background: bg, fontSize: 10, color: '#ccc' }}>
+    <div className="lf-scroll" style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+      boxSizing: 'border-box', overflowY: 'auto', overflowX: 'hidden', background: bg, fontSize: fs, color: '#ccc' }}>
 
       {/* ── SECTION 1: RAMPS ─────────────────────────────── */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', ...borderB,
+      <div style={{ flexShrink: 0, ...borderB,
         padding: '4px 8px', display: 'flex', flexDirection: 'column' }}>
         <div style={hdr}>RAMPS</div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 1, minHeight: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {BEAT_DIVISORS.map((D, i) => (
-            <div key={D} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, minHeight: 0 }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+            <div key={D} style={{ display: 'flex', alignItems: 'center', gap: 6, height: fs + 6 }}>
+              <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0,
                 background: display.triggers[i] ? '#fff' : '#1a1a1a', transition: 'none' }} />
-              <span style={{ fontSize: 9, color: display.triggers[i] ? '#ccc' : '#484848',
-                width: 36, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis',
+              <span style={{ fontSize: fs - 1, color: display.triggers[i] ? '#eee' : '#8a8a8a',
+                width: fs * 3.6, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap', textAlign: 'right' }}>
                 {widget.beatOutputs?.[i]?.name || `×${D}`}
               </span>
-              <div style={{ flex: 1, height: 5, background: '#1a1a1a', borderRadius: 1, overflow: 'hidden' }}>
+              <div style={{ flex: 1, height: 9, minHeight: 9, background: '#1a1a1a', borderRadius: 2, overflow: 'hidden' }}>
                 <div style={{ width: `${display.ramps[i] * 100}%`, height: '100%',
-                  background: display.triggers[i] ? '#fff' : '#3c3c3c', borderRadius: 1, transition: 'none' }} />
+                  background: display.triggers[i] ? '#fff' : '#4c4c4c', borderRadius: 2, transition: 'none' }} />
               </div>
             </div>
           ))}
@@ -471,43 +478,47 @@ export default function AudioAnalyserLive({ widget }: { widget: AudioAnalyserWid
       </div>
 
       {/* ── SECTION 2: ONSET + LEVELS ────────────────────── */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', ...borderB,
-        padding: '4px 8px', display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <div style={{ flexShrink: 0, ...borderB,
+        padding: '4px 8px', display: 'flex', flexDirection: 'column', gap: 4 }}>
         <div style={hdr}>ONSET</div>
 
         {/* Kick row + threshold slider */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0,
             background: display.kickFlash ? '#ff4444' : '#1e1e1e', transition: 'none' }} />
-          <span style={{ fontSize: 9, color: '#484848', width: 8, flexShrink: 0 }}>K</span>
-          <div style={{ flex: 1, height: 6, background: '#1a1a1a', borderRadius: 2, overflow: 'visible', position: 'relative' }}>
+          <span style={{ fontSize: fs, color: '#ff4444', width: fs, flexShrink: 0, fontWeight: 700 }}>K</span>
+          <div style={{ flex: 1, height: 11, background: '#1a1a1a', borderRadius: 3, overflow: 'visible', position: 'relative' }}>
             <div style={{ width: `${Math.min(1, display.kick) * 100}%`, height: '100%',
               background: display.kick > widget.kickThreshold ? '#ff4444' : '#333', borderRadius: 2, transition: 'none' }} />
-            <div style={{ position: 'absolute', top: -1, left: `${widget.kickThreshold * 100}%`, width: 1, height: 8,
-              background: '#ff4444', opacity: 0.7 }} />
+            <div style={{ position: 'absolute', top: -2, left: `${widget.kickThreshold * 100}%`, width: 2, height: 15,
+              background: '#ff4444', opacity: 0.85 }} />
           </div>
-          <span style={{ fontSize: 8, color: '#333', width: 26, textAlign: 'right', flexShrink: 0 }}>{display.kick.toFixed(2)}</span>
+          <span style={readout}>{display.kick.toFixed(2)}</span>
         </div>
-        <input type="range" min="0" max="1" step="0.001" value={widget.kickThreshold}
+        <input className="lf-fat-range" type="range" min="0" max="1" step="0.001"
+          title="K threshold"
+          value={widget.kickThreshold}
           onChange={(e) => updateThreshold('kickThreshold', Number(e.target.value))}
-          style={{ width: '100%', cursor: 'pointer', accentColor: '#ff4444', flexShrink: 0, margin: 0 }} />
+          style={{ color: '#ff4444', flexShrink: 0 }} />
 
         {/* Snare row + threshold slider */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0,
             background: display.snareFlash ? '#ffaa00' : '#1e1e1e', transition: 'none' }} />
-          <span style={{ fontSize: 9, color: '#484848', width: 8, flexShrink: 0 }}>S</span>
-          <div style={{ flex: 1, height: 6, background: '#1a1a1a', borderRadius: 2, overflow: 'visible', position: 'relative' }}>
+          <span style={{ fontSize: fs, color: '#ffaa00', width: fs, flexShrink: 0, fontWeight: 700 }}>S</span>
+          <div style={{ flex: 1, height: 11, background: '#1a1a1a', borderRadius: 3, overflow: 'visible', position: 'relative' }}>
             <div style={{ width: `${Math.min(1, display.snare) * 100}%`, height: '100%',
               background: display.snare > widget.snareThreshold ? '#ffaa00' : '#333', borderRadius: 2, transition: 'none' }} />
-            <div style={{ position: 'absolute', top: -1, left: `${widget.snareThreshold * 100}%`, width: 1, height: 8,
-              background: '#ffaa00', opacity: 0.7 }} />
+            <div style={{ position: 'absolute', top: -2, left: `${widget.snareThreshold * 100}%`, width: 2, height: 15,
+              background: '#ffaa00', opacity: 0.85 }} />
           </div>
-          <span style={{ fontSize: 8, color: '#333', width: 26, textAlign: 'right', flexShrink: 0 }}>{display.snare.toFixed(2)}</span>
+          <span style={readout}>{display.snare.toFixed(2)}</span>
         </div>
-        <input type="range" min="0" max="1" step="0.001" value={widget.snareThreshold}
+        <input className="lf-fat-range" type="range" min="0" max="1" step="0.001"
+          title="S threshold"
+          value={widget.snareThreshold}
           onChange={(e) => updateThreshold('snareThreshold', Number(e.target.value))}
-          style={{ width: '100%', cursor: 'pointer', accentColor: '#ffaa00', flexShrink: 0, margin: 0 }} />
+          style={{ color: '#ffaa00', flexShrink: 0 }} />
 
         {/* Levels */}
         <div style={{ ...hdr, marginTop: 2 }}>LEVELS</div>
@@ -516,21 +527,21 @@ export default function AudioAnalyserLive({ widget }: { widget: AudioAnalyserWid
           { label: 'M', color: '#44cc88', val: display.mid  },
           { label: 'H', color: '#88ddff', val: display.high },
         ]).map(({ label, color, val }) => (
-          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ fontSize: 9, color, width: 10, flexShrink: 0 }}>{label}</span>
-            <div style={{ flex: 1, height: 5, background: '#1a1a1a', borderRadius: 2, overflow: 'hidden' }}>
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: fs, color, width: fs, flexShrink: 0, fontWeight: 700 }}>{label}</span>
+            <div style={{ flex: 1, height: 11, background: '#1a1a1a', borderRadius: 3, overflow: 'hidden' }}>
               <div style={{ width: `${Math.min(1, val) * 100}%`, height: '100%', background: color, borderRadius: 2, transition: 'none' }} />
             </div>
-            <span style={{ fontSize: 8, color: '#333', width: 26, textAlign: 'right', flexShrink: 0 }}>{val.toFixed(2)}</span>
+            <span style={readout}>{val.toFixed(2)}</span>
           </div>
         ))}
       </div>
 
       {/* ── SECTION 3: SPECTRUM ──────────────────────────── */}
-      <div ref={containerRef} style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+      <div ref={containerRef} style={{ flex: '1 0 90px', minHeight: 90, position: 'relative', overflow: 'hidden' }}>
         {audioError && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 9, color: '#444', padding: 8, textAlign: 'center', zIndex: 1 }}>
+            fontSize: fs - 1, color: '#888', padding: 8, textAlign: 'center', zIndex: 1 }}>
             {audioError}
           </div>
         )}

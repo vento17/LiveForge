@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import type { GraphWidget, GraphPoint, SpeedMultiplier } from '../../../shared/types/project';
 import type { MidiMapping, OscMapping } from '../../../shared/types/mapping';
+import { useGlobalTransport } from '../base/useGlobalTransport';
 import { useStore } from '../../store';
 import { dispatchValue } from '../../ipc/dispatch';
 import { bridge } from '../../ipc/bridge';
@@ -63,13 +64,10 @@ function getValueAt(t: number, points: GraphPoint[]): number {
 }
 
 export default function GraphWidgetLive({ widget }: { widget: GraphWidget }): React.JSX.Element {
-  const { activePageId, updateWidget, masterBpm, isGlobalPlaying, globalResetTick, globalPlayTick } = useStore((s) => ({
+  const { activePageId, updateWidget, masterBpm } = useStore((s) => ({
     activePageId:    s.activePageId,
     updateWidget:    s.updateWidget,
     masterBpm:       s.masterBpm,
-    isGlobalPlaying: s.isGlobalPlaying,
-    globalResetTick: s.globalResetTick,
-    globalPlayTick:  s.globalPlayTick,
   }));
 
   const color = widget.style.foregroundColor;
@@ -398,24 +396,16 @@ export default function GraphWidgetLive({ widget }: { widget: GraphWidget }): Re
     if (isCC || isNote) handleReverseRef.current();
   }), []);
 
-  useEffect(() => {
-    if (isGlobalPlaying) startPlayingRef.current();
-    else stopPlayingRef.current();
-  }, [isGlobalPlaying]);
-
-  // globalPlayTick: force-restart even if widget was already playing
-  useEffect(() => {
-    if (globalPlayTick === 0) return;
-    stopPlayingRef.current();
-    startPlayingRef.current();
-  }, [globalPlayTick]);
-
-  useEffect(() => {
-    if (globalResetTick === 0) return;
-    const wasPlaying = isPlayingRef.current;
-    stopPlayingRef.current();
-    if (wasPlaying) startPlayingRef.current();
-  }, [globalResetTick]);
+  useGlobalTransport({
+    start: () => startPlayingRef.current(),
+    stop:  () => stopPlayingRef.current(),
+    // Restarting IS the way back to the top of the curve for this widget.
+    reset: () => {
+      const wasPlaying = isPlayingRef.current;
+      stopPlayingRef.current();
+      if (wasPlaying) startPlayingRef.current();
+    },
+  });
 
   useEffect(() => () => {
     isPlayingRef.current = false;

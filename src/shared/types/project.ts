@@ -776,6 +776,10 @@ export interface Project {
   activePageId: string;
   tapTriggerMapping: Mapping | null;
   resetTriggerMapping: Mapping | null;
+  // The other two transport buttons in the top bar. Optional so projects saved
+  // before they existed still load.
+  playTriggerMapping?: Mapping | null;
+  stopTriggerMapping?: Mapping | null;
   // Project-wide frame rate. Timelines read their ruler in frames against this
   // unless they carry their own timecode rate.
   frameRate?: 24 | 25 | 29.97 | 30 | 50 | 60;
