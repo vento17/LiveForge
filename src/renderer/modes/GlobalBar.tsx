@@ -196,7 +196,11 @@ export default function GlobalBar(): React.JSX.Element {
           minValue: 0,
           maxValue: 1,
         };
-        const key = t.mappingKey ?? 'mapping';
+        // Learn binds where the cell LISTENS. It used to overwrite `mapping`,
+        // which is the OUTPUT — so learning a MIDI fader onto a cell that was
+        // sending OSC silently turned it into a MIDI sender and the OSC
+        // destination went dead.
+        const key = t.mappingKey ?? 'inputMapping';
         useStore.getState().updateCell(t.pageId, t.widgetId, t.cellIndex, { [key]: mapping });
         useStore.getState().setMidiLearnTarget(null);
       });
@@ -214,7 +218,11 @@ export default function GlobalBar(): React.JSX.Element {
           minValue: 0,
           maxValue: 127,
         };
-        const key = t.mappingKey ?? 'mapping';
+        // Learn binds where the cell LISTENS. It used to overwrite `mapping`,
+        // which is the OUTPUT — so learning a MIDI fader onto a cell that was
+        // sending OSC silently turned it into a MIDI sender and the OSC
+        // destination went dead.
+        const key = t.mappingKey ?? 'inputMapping';
         useStore.getState().updateCell(t.pageId, t.widgetId, t.cellIndex, { [key]: mapping });
         useStore.getState().setMidiLearnTarget(null);
       });

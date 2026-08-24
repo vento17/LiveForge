@@ -33,7 +33,9 @@ export default function SliderBankLive({ widget }: { widget: SliderBankWidget })
       if (evt.messageType !== 'controlChange') return;
       const w = widgetRef.current;
       w.cells.forEach((cell, i) => {
-        const m = cell?.mapping ?? w.mapping;
+        // Listen on the input binding when there is one; otherwise the
+        // output mapping doubles as the input, as a motorised fader wants.
+        const m = cell?.inputMapping ?? cell?.mapping ?? w.mapping;
         if (!m || m.type !== 'midi') return;
         const mm = m as MidiMapping;
         if (mm.messageType !== 'controlChange') return;

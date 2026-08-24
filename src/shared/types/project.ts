@@ -54,6 +54,11 @@ export interface SliderCellConfig {
   color?: string;       // overrides style.foregroundColor if set
   mapping: Mapping;
   feedbackRules: FeedbackRule[];
+  // Where the cell LISTENS. Separate from `mapping`, which is where it SENDS:
+  // a fader can take a physical MIDI controller in and push OSC out. Absent
+  // means the cell still listens on its own output mapping, which is what a
+  // motorised MIDI fader wants.
+  inputMapping?: Mapping;
 }
 
 export interface SliderBankWidget extends WidgetBase {
@@ -78,6 +83,11 @@ export interface ButtonCellConfig {
   feedbackRules: FeedbackRule[];
   onValue: number;
   offValue: number;
+  // Where the cell LISTENS. Separate from `mapping`, which is where it SENDS:
+  // a fader can take a physical MIDI controller in and push OSC out. Absent
+  // means the cell still listens on its own output mapping, which is what a
+  // motorised MIDI fader wants.
+  inputMapping?: Mapping;
 }
 
 export interface ButtonGridWidget extends WidgetBase {
@@ -98,6 +108,11 @@ export interface KnobCellConfig {
   feedbackRules: FeedbackRule[];
   minAngle: number;
   maxAngle: number;
+  // Where the cell LISTENS. Separate from `mapping`, which is where it SENDS:
+  // a fader can take a physical MIDI controller in and push OSC out. Absent
+  // means the cell still listens on its own output mapping, which is what a
+  // motorised MIDI fader wants.
+  inputMapping?: Mapping;
 }
 
 export interface KnobBankWidget extends WidgetBase {

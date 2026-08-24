@@ -71,7 +71,9 @@ export default function ButtonGridLive({ widget }: { widget: ButtonGridWidget })
     const ch = evt.channel;
     const vel = evt.value;
     w.cells.forEach((cell, i) => {
-      const m = cell?.mapping ?? w.mapping;
+      // Listen on the input binding when there is one; otherwise the output
+      // mapping doubles as the input, as a controller with LEDs wants.
+      const m = cell?.inputMapping ?? cell?.mapping ?? w.mapping;
       if (!m || m.type !== 'midi') return;
       if ((m.messageType !== 'noteOn' && m.messageType !== 'noteOff') || m.channel !== ch || m.number !== note) return;
       const on = vel > 0;
