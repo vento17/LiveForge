@@ -31,6 +31,7 @@ export default function LfoWidgetLive({ widget }: { widget: LfoWidget }): React.
   const lastNowRef    = useRef(0);
   const randomValRef  = useRef(0.5);
   const lastRandomPhaseFloorRef = useRef(-1);
+  const lastSentRef  = useRef(Number.NaN);
 
   // Play/stop — starts running (preserves prior free-run behavior); stop freezes.
   const [isPlaying, setIsPlaying] = useState(true);
@@ -51,10 +52,12 @@ export default function LfoWidgetLive({ widget }: { widget: LfoWidget }): React.
     function tick(now: number) {
       const dt = now - lastNowRef.current;
       lastNowRef.current = now;
-      // Frozen while stopped — hold last value, keep lastNow current so there's
-      // no phase jump when it resumes.
-      if (!isPlayingRef.current) { rafId = requestAnimationFrame(tick); return; }
-      if (dt > 0 && dt < 300) {
+      // Stop freezes TIME, not the parameters. accBeats stays put so there is no
+      // phase jump on resume, but the value is still recomputed every frame —
+      // otherwise moving offset, phase, amplitude or waveform while stopped did
+      // nothing until you pressed play.
+      const running = isPlayingRef.current;
+      if (running && dt > 0 && dt < 300) {
         accBeatsRef.current += dt * masterBpmRef.current / 60000;
       }
 
@@ -87,8 +90,13 @@ export default function LfoWidgetLive({ widget }: { widget: LfoWidget }): React.
       // Apply amplitude and offset: centre at offset, swing ±amplitude/2
       const value = Math.max(0, Math.min(1, w.offset + (raw - 0.5) * w.amplitude));
 
-      useStore.getState().setCellValue(w.id, 0, value);
-      if (w.mapping) dispatchValue(w.mapping, value);
+      // While stopped the value only moves when you move a control, so emit on
+      // change instead of flooding the wire with an unchanging number.
+      if (running || value !== lastSentRef.current) {
+        lastSentRef.current = value;
+        useStore.getState().setCellValue(w.id, 0, value);
+        if (w.mapping) dispatchValue(w.mapping, value);
+      }
 
       rafId = requestAnimationFrame(tick);
     }

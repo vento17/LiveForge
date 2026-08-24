@@ -164,6 +164,17 @@ export default function GraphWidgetLive({ widget }: { widget: GraphWidget }): Re
     rafRef.current = requestAnimationFrame((n) => tickRef.current(n));
   };
 
+  // Stop freezes TIME, not the curve. The tick loop shuts down entirely when
+  // stopped, so rather than idling a frame loop just to notice edits, recompute
+  // at the frozen playhead whenever the points change.
+  useEffect(() => {
+    if (isPlayingRef.current) return;
+    const w = widgetRef.current;
+    const v = getValueAt(tRef.current, w.points);
+    useStore.getState().setCellValue(w.id, 0, v);
+    if (w.mapping) dispatchValue(w.mapping, v);
+  }, [widget.points]);
+
   // ── Transport ──────────────────────────────────────────────────────────────
 
   function startPlaying() {

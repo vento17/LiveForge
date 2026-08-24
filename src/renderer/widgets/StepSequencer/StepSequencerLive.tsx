@@ -63,16 +63,14 @@ export default function StepSequencerLive({ widget }: { widget: StepSequencerWid
   // RAF tick — created once, reads live values via refs
   useEffect(() => {
     function tick(now: number) {
-      if (!isPlayingRef.current) {
-        lastNowRef.current = now;
-        rafRef.current = requestAnimationFrame(tick);
-        return;
-      }
-
+      // Stop freezes TIME, not the parameters: the playhead stays on its step,
+      // but editing that step (or RND/MAX/ZERO) still moves the output instead
+      // of waiting for the next play.
+      const running = isPlayingRef.current;
       const dt = now - lastNowRef.current;
       lastNowRef.current = now;
 
-      if (dt > 0 && dt < 300) {
+      if (running && dt > 0 && dt < 300) {
         accBeatsRef.current += dt * masterBpmRef.current / 60000 * localSpeedRef.current;
       }
 
@@ -93,7 +91,7 @@ export default function StepSequencerLive({ widget }: { widget: StepSequencerWid
       // it ramps every frame (exponential slew, up to ~0.6 s time constant).
       const s = w.steps[step];
       const target = s?.active ? s.value : 0;
-      const smooth = w.smooth ?? 0;
+      const smooth = running ? (w.smooth ?? 0) : 0;
       if (smooth <= 0) {
         outRef.current = target;
       } else {
