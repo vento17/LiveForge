@@ -48,6 +48,11 @@ export interface IpcChannels {
   // OSC feedback (main → renderer, event)
   'tr:osc:feedback':          { req: never;                      res: OscFeedbackMessage };
 
+  // Sidecar stdout/stderr (main → renderer, event). In a packaged build the
+  // sidecar's own output goes nowhere, so a user hitting "stream unavailable"
+  // has no way to see WHY. Forward it into the in-app log instead.
+  'tr:sidecar:log':           { req: never;                      res: { level: 'info' | 'error'; text: string } };
+
   // Art-Net
   'tr:artnet:configure':      { req: ArtNetConfigPayload;        res: { ok: boolean } };
   'tr:artnet:sendChannel':    { req: ArtNetChannelPayload;       res: void };

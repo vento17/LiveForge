@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
+import { bridge } from '../ipc/bridge';
 import type { LogLevel } from '../store/appSlice';
 
 // Install global error capture exactly once (survives component remounts).
@@ -35,6 +36,13 @@ const LEVEL_COLOR: Record<LogLevel, string> = {
 
 export default function LogConsole(): React.JSX.Element {
   useEffect(() => { installCapture(); }, []);
+
+  // The Spout/NDI sidecar runs in the main process, where its output is
+  // invisible in a packaged build. Surface it here so "stream unavailable"
+  // comes with a reason — a missing NDI runtime, a numpy/Pillow mismatch.
+  useEffect(() => bridge.on('tr:sidecar:log', ({ level, text }) => {
+    useStore.getState().addLog(level === 'error' ? 'error' : 'info', `[sidecar] ${text}`);
+  }), []);
 
   const entries      = useStore((s) => s.logEntries);
   const open         = useStore((s) => s.logOpen);

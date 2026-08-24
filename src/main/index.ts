@@ -7,6 +7,33 @@ import { registerAllHandlers } from './ipc/router';
 let mainWindow: BrowserWindow | null = null;
 let sidecar: ChildProcess | null = null;
 
+// The sidecar's own stdout is invisible in a packaged build, so its startup
+// lines — "Spout: OK", "NDI unavailable: …", "numpy/Pillow missing" — never
+// reached anyone hitting a blank video widget. Push them into the in-app log.
+// The sidecar starts before the window exists and long before React subscribes,
+// and its FIRST lines are the diagnostic ones. Hold them until someone can hear.
+const sidecarBacklog: { level: 'info' | 'error'; text: string }[] = [];
+let sidecarLogReady = false;
+
+function relaySidecar(level: 'info' | 'error', data: Buffer | string): void {
+  const text = String(data).trimEnd();
+  if (!text) return;
+  process.stdout.write(`[sidecar] ${text}
+`);
+  if (sidecarLogReady && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('tr:sidecar:log', { level, text });
+  } else {
+    if (sidecarBacklog.length < 200) sidecarBacklog.push({ level, text });
+  }
+}
+
+function flushSidecarLog(): void {
+  sidecarLogReady = true;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  for (const entry of sidecarBacklog) mainWindow.webContents.send('tr:sidecar:log', entry);
+  sidecarBacklog.length = 0;
+}
+
 function startSidecar(): void {
   // The Spout/NDI video sidecar is Windows-only (Spout needs SpoutLibrary.dll).
   // Skip it elsewhere so the app runs on macOS/Linux without those widgets —
@@ -27,10 +54,10 @@ function startSidecar(): void {
   try {
     sidecar = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     // Never let a missing/failed sidecar crash the app (unhandled 'error' event).
-    sidecar.on('error', (err) => { console.error('[sidecar] failed to start:', err.message); sidecar = null; });
-    sidecar.stdout?.on('data', (d: Buffer) => process.stdout.write(`[sidecar] ${d}`));
-    sidecar.stderr?.on('data', (d: Buffer) => process.stderr.write(`[sidecar:err] ${d}`));
-    sidecar.on('exit', (code) => { console.log(`[sidecar] exited ${code}`); sidecar = null; });
+    sidecar.on('error', (err) => { relaySidecar('error', `failed to start: ${err.message}`); sidecar = null; });
+    sidecar.stdout?.on('data', (d: Buffer) => relaySidecar('info', d));
+    sidecar.stderr?.on('data', (d: Buffer) => relaySidecar('error', d));
+    sidecar.on('exit', (code) => { relaySidecar(code ? 'error' : 'info', `exited ${code}`); sidecar = null; });
   } catch (err) {
     console.error('[sidecar] spawn error:', err);
     sidecar = null;
@@ -56,6 +83,9 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     mainWindow!.show();
   });
+
+  // Renderer is up: hand it whatever the sidecar said while it was booting.
+  mainWindow.webContents.on('did-finish-load', flushSidecarLog);
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url);
