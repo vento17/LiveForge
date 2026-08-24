@@ -13,6 +13,7 @@ import {
 import { keyCapLabel, RESERVED_CODES } from '../../../widgets/Keyboard/keyNames';
 import { cellLabel } from '../../../widgets/base/links';
 import NumberInput from '../../../widgets/base/NumberInput';
+import { cueScopePages, cueScopeWidgets, widgetsInScope, CUE_SCOPE_ALL } from '../../../widgets/Cues/scope';
 import { nextFreeCc } from '../../../widgets/defaults';
 import { artnetConfigOutputs, sacnConfigOutputs, oscConfigOutputs, midiConfigOutputs, listOutputs } from '../../../../shared/outputs';
 import type { OutputProtocol } from '../../../../shared/outputs';
@@ -536,6 +537,43 @@ const NAV_BUTTONS: { key: NavKey; label: string; defaultAddr: string }[] = [
   { key: 'navLast',   label: 'Last ⏭',   defaultAddr: '/cue/last'   },
 ];
 
+
+// ─── Cue scope ────────────────────────────────────────────────────────────────
+// What a recorded cue covers. Rendered here and, with the same helpers, in the
+// Live sidebar — a cue's reach is something you retune during a show.
+
+function CueScopeFields({ widget, patch }: {
+  widget: CuesWidget;
+  patch: (p: Record<string, unknown>) => void;
+}) {
+  const project = useProject();
+  const pageOpts = cueScopePages(project);
+  const widgetOpts = cueScopeWidgets(project, widget.scopePageId);
+  const count = widgetsInScope(project, widget.scopePageId, widget.scopeWidgetId).length;
+
+  return (
+    <Section label="Cue scope">
+      <Field label="Pages">
+        <select style={styles.input} value={widget.scopePageId ?? CUE_SCOPE_ALL}
+          // Changing the page invalidates a widget picked from another one.
+          onChange={(e) => patch({ scopePageId: e.target.value, scopeWidgetId: CUE_SCOPE_ALL })}>
+          {pageOpts.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+      </Field>
+      <Field label="Widgets">
+        <select style={styles.input} value={widget.scopeWidgetId ?? CUE_SCOPE_ALL}
+          onChange={(e) => patch({ scopeWidgetId: e.target.value })}>
+          {widgetOpts.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+      </Field>
+      <div style={{ fontSize: 12, color: 'var(--color-text-dim)', lineHeight: 1.5 }}>
+        Recording a cue captures {count} widget{count !== 1 ? 's' : ''}.
+        Applies to cues you record from now on — ones already saved keep what they hold.
+      </div>
+    </Section>
+  );
+}
+
 function CuesInspectorPanel({ widget, activePageId, updateWidget }: {
   widget: CuesWidget;
   activePageId: string;
@@ -554,6 +592,7 @@ function CuesInspectorPanel({ widget, activePageId, updateWidget }: {
         {widget.cues.length} cue{widget.cues.length !== 1 ? 's' : ''} saved. Manage in Live mode.
         <br />OSC trigger: /<em>cuename</em>
       </div>
+      <CueScopeFields widget={widget} patch={patch} />
       <Section label="Navigation mappings">
         {NAV_BUTTONS.map(({ key, label, defaultAddr }) => {
           const m = widget[key];

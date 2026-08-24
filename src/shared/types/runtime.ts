@@ -17,6 +17,10 @@ export interface CellRuntime {
 export interface WidgetRuntime {
   widgetId: string;
   cells: CellRuntime[];
+  // Transport state of widgets that own one (LFO, Graph, Step Sequencer). It
+  // lives here rather than inside the component so a Cue can snapshot it and
+  // drive it back on recall. undefined = the widget has no transport.
+  playing?: boolean;
 }
 
 // ─── Global runtime state ─────────────────────────────────────────────────────

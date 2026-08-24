@@ -3,10 +3,12 @@ import { useStore, useActivePage } from '../../store';
 import type {
   Widget, LfoWidget, MathWidget, ValueDisplayWidget,
   StepSequencerWidget, GraphWidget, SoundPlayerWidget,
-  SubmastersWidget, AudioAnalyserWidget, InstanceWidget,
+  SubmastersWidget, AudioAnalyserWidget, InstanceWidget, CuesWidget,
   LfoWaveform, LfoRateMode, MathOperation, ValueDisplayFormat,
   SpeedMultiplier, GraphPlayMode, SubmasterMergeMode,
 } from '../../../shared/types/project';
+
+import { cueScopePages, cueScopeWidgets, widgetsInScope, CUE_SCOPE_ALL } from '../../widgets/Cues/scope';
 
 type UpdateFn = (patch: Record<string, unknown>) => void;
 
@@ -276,6 +278,33 @@ function SoundPlayerParams({ w, update }: { w: SoundPlayerWidget; update: Update
   );
 }
 
+
+function CuesParams({ w, update }: { w: CuesWidget; update: UpdateFn }): React.JSX.Element {
+  // Same helpers as the Inspector, so the two lists cannot drift apart.
+  const project = useStore((st) => st.project);
+  const count = widgetsInScope(project, w.scopePageId, w.scopeWidgetId).length;
+  return (
+    <>
+      <SelectRow
+        label="Pages"
+        value={w.scopePageId ?? CUE_SCOPE_ALL}
+        options={cueScopePages(project).map((o) => ({ value: o.id, label: o.label }))}
+        // Changing the page invalidates a widget picked from another one.
+        onChange={(v) => update({ scopePageId: v, scopeWidgetId: CUE_SCOPE_ALL })}
+      />
+      <SelectRow
+        label="Widgets"
+        value={w.scopeWidgetId ?? CUE_SCOPE_ALL}
+        options={cueScopeWidgets(project, w.scopePageId).map((o) => ({ value: o.id, label: o.label }))}
+        onChange={(v) => update({ scopeWidgetId: v })}
+      />
+      <div style={{ fontSize: 10, color: '#555', padding: '2px 10px 6px', lineHeight: 1.5 }}>
+        Recording captures {count} widget{count !== 1 ? 's' : ''}.
+      </div>
+    </>
+  );
+}
+
 function SubmastersParams({ w, update }: { w: SubmastersWidget; update: UpdateFn }): React.JSX.Element {
   return (
     <ButtonGroupRow
@@ -336,6 +365,7 @@ function ParamPanel({ widget, update }: { widget: Widget; update: UpdateFn }): R
     case 'graphWidget':   return <GraphParams w={widget as GraphWidget} update={update} />;
     case 'soundPlayer':   return <SoundPlayerParams w={widget as SoundPlayerWidget} update={update} />;
     case 'submasters':    return <SubmastersParams w={widget as SubmastersWidget} update={update} />;
+    case 'cues':          return <CuesParams w={widget as CuesWidget} update={update} />;
     case 'audioAnalyser': return <AudioParams w={widget as AudioAnalyserWidget} update={update} />;
     case 'instance':      return <InstanceParams w={widget as InstanceWidget} update={update} />;
     default:              return <NoParams kind={widget.kind} />;

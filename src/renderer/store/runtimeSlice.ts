@@ -14,6 +14,8 @@ export interface RuntimeSlice {
   // Value updates from touch input
   setCellValue: (widgetId: string, cellIndex: number, value: number) => void;
   setButtonActive: (widgetId: string, cellIndex: number, active: boolean) => void;
+  // Play/stop of a widget's own transport, so Cues can capture and restore it.
+  setWidgetPlaying: (widgetId: string, playing: boolean) => void;
   // Batched write: sets values[i] into cells[startIndex + i] in one store update
   setRampCells: (widgetId: string, startIndex: number, values: number[]) => void;
 
@@ -49,6 +51,7 @@ export const createRuntimeSlice: StateCreator<StoreState, [['zustand/immer', nev
       if (existing) {
         next[widget.id] = {
           widgetId: widget.id,
+          playing: existing.playing,
           cells: Array.from({ length: count }, (_, i) => {
             const c = existing.cells[i];
             return c
@@ -71,6 +74,12 @@ export const createRuntimeSlice: StateCreator<StoreState, [['zustand/immer', nev
     const wr = s.runtime.widgets[widgetId];
     if (!wr || !wr.cells[cellIndex]) return;
     wr.cells[cellIndex].value = Math.max(0, Math.min(1, value));
+  }),
+
+  setWidgetPlaying: (widgetId, playing) => set((s) => {
+    const wr = s.runtime.widgets[widgetId];
+    if (!wr || wr.playing === playing) return;
+    wr.playing = playing;
   }),
 
   setButtonActive: (widgetId, cellIndex, active) => set((s) => {

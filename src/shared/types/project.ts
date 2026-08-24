@@ -338,12 +338,20 @@ export interface CueData {
   bgColor: string;      // launch button background color
   fadeTime: number;     // seconds, 0 = instant
   snapshot: Record<string, number[]>; // widgetId → array of cell values (0-1)
+  // widgetId → transport state for widgets that own one (LFO, Graph, Step
+  // Sequencer). Absent on cues saved before this existed, in which case their
+  // transports are left alone.
+  play?: Record<string, boolean>;
   links?: Record<string, RouterRow[]>; // routerWidgetId → its rows at save time (link/routing state); absent on pre-feature cues
 }
 
 export interface CuesWidget extends WidgetBase {
   kind: 'cues';
   cues: CueData[];
+  // What a recorded cue covers. Both default to 'all', so a cue captures every
+  // widget on every page unless you deliberately narrow it.
+  scopePageId?: string;    // page id, or 'all'
+  scopeWidgetId?: string;  // widget id, or 'all'
   navFirst:  Mapping;
   navPrev:   Mapping;
   navNext:   Mapping;

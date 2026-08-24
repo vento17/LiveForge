@@ -126,6 +126,21 @@ export default function LfoWidgetLive({ widget }: { widget: LfoWidget }): React.
 
   const liveValue = useStore((s) => s.runtime.widgets[widget.id]?.cells[0]?.value ?? 0);
 
+
+  // ─── Transport ↔ store ──────────────────────────────────────────────────────
+  // Mirror play/stop into the runtime so a Cue can snapshot it, and follow the
+  // store when a cue recall drives it back. The guard on isPlayingRef stops the
+  // two halves from chasing each other.
+  useEffect(() => {
+    useStore.getState().setWidgetPlaying(widget.id, isPlaying);
+  }, [isPlaying, widget.id]);
+
+  useEffect(() => useStore.subscribe((s) => {
+    const want = s.runtime.widgets[widget.id]?.playing;
+    if (want === undefined || want === isPlayingRef.current) return;
+    if (want) startRef.current(); else stopRef.current();
+  }), [widget.id]);
+
   return (
     <div style={{
       width: '100%', height: '100%', display: 'flex', flexDirection: 'column',

@@ -9,6 +9,7 @@ import { cellCount } from '../utils';
 import CellLinkMenu from '../base/CellLinkMenu';
 import { useSlavedCells, SLAVE_OUTLINE } from '../base/useSlavedCells';
 import NumberInput from '../base/NumberInput';
+import { widgetsInScope } from './scope';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -81,14 +82,16 @@ export default function CuesLive({ widget }: { widget: CuesWidget }): React.JSX.
   // ─── Add cue ──────────────────────────────────────────────────────────────
 
   function handleAddCue() {
-    const { project, activePageId: pid, runtime } = useStore.getState();
-    const page = project.pages.find((p) => p.id === pid);
-    if (!page) return;
+    const { project, runtime } = useStore.getState();
     const snapshot: Record<string, number[]> = {};
-    for (const w of page.widgets) {
-      if (w.kind === 'textWidget' || w.kind === 'imageWidget' || w.kind === 'cues') continue;
+    const play: Record<string, boolean> = {};
+    // Defaults to every widget on every page; the two scope dropdowns narrow it.
+    for (const w of widgetsInScope(project, widget.scopePageId, widget.scopeWidgetId)) {
       const wr = runtime.widgets[w.id];
       if (wr) snapshot[w.id] = wr.cells.map((c) => c.value);
+      // Widgets with their own transport (LFO, Graph, Step Sequencer) store it
+      // in the runtime; capture it so the cue restores what was running.
+      if (wr?.playing !== undefined) play[w.id] = wr.playing;
     }
     // Capture link/routing state — every router's rows across all pages, so
     // recalling this cue restores exactly which cells are slaved to what.
@@ -99,7 +102,7 @@ export default function CuesLive({ widget }: { widget: CuesWidget }): React.JSX.
       }
     }
     const n = widget.cues.length + 1;
-    saveCues([...widget.cues, { id: nanoid(), name: `Cue ${n}`, bgColor: '#1c2a1c', fadeTime: 0, snapshot, links }]);
+    saveCues([...widget.cues, { id: nanoid(), name: `Cue ${n}`, bgColor: '#1c2a1c', fadeTime: 0, snapshot, play, links }]);
   }
 
   // ─── Launch cue ───────────────────────────────────────────────────────────
@@ -119,6 +122,15 @@ export default function CuesLive({ widget }: { widget: CuesWidget }): React.JSX.
       catch (err) { console.error('[cue] failed to restore links', err); }
     }
 
+    // Transport is a boolean, so it snaps rather than fading with the values.
+    // Absent on cues saved before this feature — those leave transports alone.
+    if (cue.play) {
+      for (const [wid, playing] of Object.entries(cue.play)) {
+        try { useStore.getState().setWidgetPlaying(wid, playing); }
+        catch (err) { console.error('[cue] failed to restore transport', wid, err); }
+      }
+    }
+
     const from: Record<string, number[]> = {};
     for (const widgetId of Object.keys(cue.snapshot)) {
       const wr = runtime.widgets[widgetId];
@@ -128,16 +140,17 @@ export default function CuesLive({ widget }: { widget: CuesWidget }): React.JSX.
     setActiveCueId(cue.id);
 
     function applyAt(t: number) {
-      const { project: proj, activePageId: apid } = useStore.getState();
-      const pg = proj.pages.find((p) => p.id === apid);
-      if (!pg) return;
+      const { project: proj } = useStore.getState();
+      // Look across every page: a cue can hold widgets that are not on the page
+      // currently shown, and they still have to be recalled.
+      const allWidgets = proj.pages.flatMap((p) => p.widgets);
       for (const [wid, targetVals] of Object.entries(cue.snapshot)) {
         // Defensive per-widget: a widget deleted since the cue was saved is
         // simply skipped; a widget added later isn't in the snapshot so it's
         // left alone. One bad widget never breaks the rest of the recall.
         try {
           const fromVals = from[wid] ?? [];
-          const w = pg.widgets.find((ww) => ww.id === wid);
+          const w = allWidgets.find((ww) => ww.id === wid);
           if (!w) continue;
           const cellN = cellCount(w);
           for (let i = 0; i < targetVals.length && i < cellN; i++) {

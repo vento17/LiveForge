@@ -426,12 +426,14 @@ export const WIDGET_ENTRIES: ManualEntry[] = [
     id: 'w-cues', tab: 'Cues', title: 'Cues',
     intro: 'Snapshots of the whole desk, recalled with a fade.',
     items: [
-      ['Record', 'Stores every widget value — and the current link state — into a cue.'],
+      ['Record', 'Stores every widget value, the current link state, and the play/stop of anything with its own transport (LFO, Graph, Step Sequencer) into a cue.'],
+      ['Scope · Pages', 'All pages by default, so a cue is a snapshot of the whole desk. Pick one page to narrow it.'],
+      ['Scope · Widgets', 'ALL WIDGETS by default; the list follows the page above, so you can point a Cues widget at a single fader bank. Both dropdowns are in the Inspector and in the Live sidebar.'],
       ['Fade time', 'Seconds to cross-fade into the cue. Zero snaps instantly. The − and + buttons either side step it by 0.1s.'],
       ['Colour', 'The launch button colour.'],
       ['First / Prev / Next / Random / Last', 'Navigation, each with its own mapping so a footswitch can drive the show.'],
     ],
-    note: 'Each cue is also a cell, so a cue can be fired from a Router or a button.',
+    note: 'Each cue is also a cell, so a cue can be fired from a Router or a button. The scope applies to cues you record from then on — ones already saved keep exactly what they captured. Transport state snaps on recall rather than fading, since it is on or off.',
   },
   {
     id: 'w-instance', tab: 'Instance', title: 'Instance',
