@@ -20,6 +20,8 @@ export const SETTINGS_ENTRIES: ManualEntry[] = [
     items: [
       ['Name', 'Project name, stored in the .json save file.'],
       ['Save / Load', 'Writes or reads a project file. Widgets, mappings, cues and links all travel together.'],
+      ['Autosave and recovery', 'Every change is written to a recovery copy a few seconds later, so a crash or a force quit no longer costs the session. On the next launch LiveForge offers to restore it, showing the project name, page and widget counts and the time. Restore brings it back; Discard throws it away. Saving to a file clears the copy, because the work is then somewhere you chose.'],
+      ['If a screen breaks', 'A crash inside a widget now shows the error with Save project and Back to Config, instead of a blank window. The top bar keeps working throughout, so the project can always be rescued to a file.'],
       ['Trigger all widgets', 'Re-sends the current value of every control on every page. Use it after connecting, to push the desk state onto a receiver that just came up.'],
       ['Pages all run at once', 'In Live mode every page is alive, not just the one on screen. A timeline started on page 1 keeps playing while you work on page 2, LFOs hold their phase, and a Router source on a hidden page still drives its targets.'],
       ['▶ Play (all)', 'Starts the LFO, the Step Sequencer and the Graph, from the top.'],

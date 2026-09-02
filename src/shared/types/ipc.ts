@@ -16,6 +16,11 @@ export interface IpcChannels {
   'tr:project:load':          { req: void;                       res: Project | null };
   'tr:project:export':        { req: Project;                    res: { ok: boolean; path: string } };
   'tr:project:backup':        { req: Project;                    res: { ok: boolean; path: string } };
+  // Crash recovery. autosave overwrites one rolling file; recoverRead returns it
+  // with the time it was written; recoverClear drops it once the work is safe.
+  'tr:project:autosave':      { req: Project;                    res: { ok: boolean } };
+  'tr:project:recoverRead':   { req: void;                       res: { project: Project; savedAt: string } | null };
+  'tr:project:recoverClear':  { req: void;                       res: { ok: boolean } };
 
   // Window
   'tr:window:fullscreen':     { req: boolean;                    res: void };

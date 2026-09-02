@@ -1,0 +1,136 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { useStore } from '../store';
+import { bridge } from '../ipc/bridge';
+import type { Project } from '../../shared/types/project';
+
+// How long to wait after the last edit before writing. Long enough that dragging
+// a widget does not write on every frame, short enough that almost nothing is
+// lost when the app dies.
+const QUIET_MS = 3000;
+// And a ceiling, so a long unbroken stretch of edits still reaches disk.
+const MAX_MS = 20000;
+
+/**
+ * Autosave and crash recovery.
+ *
+ * The app had a backup IPC channel wired end to end in main and declared in the
+ * IPC types, and nothing in the renderer ever called it — so until you pressed
+ * Save there was nothing on disk at all. A black screen, a crash or a force
+ * quit took the whole session with it.
+ *
+ * The recovery copy is deliberately NOT cleared when the app exits: an exit is
+ * exactly when we cannot tell a clean quit from a force close. It is cleared
+ * when the work is provably safe — an explicit Save (done in main) or the user
+ * dismissing the offer.
+ */
+export default function Recovery(): React.JSX.Element | null {
+  const project = useStore((s) => s.project);
+  const [offer, setOffer] = useState<{ project: Project; savedAt: string } | null>(null);
+
+  // ── Offer to restore on startup ────────────────────────────────────────────
+  // Read before the first autosave can overwrite it.
+  const checked = useRef(false);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (checked.current) return;
+    checked.current = true;
+    bridge.invoke('tr:project:recoverRead', undefined as never)
+      .then((found) => { if (found) setOffer(found); })
+      .catch(() => {})
+      .finally(() => setReady(true));
+  }, []);
+
+  // ── Autosave ───────────────────────────────────────────────────────────────
+  const quiet = useRef<number | null>(null);
+  const ceiling = useRef<number | null>(null);
+  const first = useRef(true);
+
+  useEffect(() => {
+    // Do not write until the recovery check has run, or the first render would
+    // overwrite the very file we are about to offer.
+    if (!ready) return;
+    if (first.current) { first.current = false; return; }
+
+    const write = () => {
+      if (quiet.current)   { clearTimeout(quiet.current);   quiet.current = null; }
+      if (ceiling.current) { clearTimeout(ceiling.current); ceiling.current = null; }
+      bridge.invoke('tr:project:autosave', useStore.getState().project).catch(() => {});
+    };
+
+    if (quiet.current) clearTimeout(quiet.current);
+    quiet.current = window.setTimeout(write, QUIET_MS);
+    if (!ceiling.current) ceiling.current = window.setTimeout(write, MAX_MS);
+
+    return () => { if (quiet.current) clearTimeout(quiet.current); };
+  }, [project, ready]);
+
+  // A last write on the way out catches whatever the timers had not flushed.
+  useEffect(() => {
+    const flush = () => { bridge.send('tr:project:autosave', useStore.getState().project); };
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
+
+  if (!offer) return null;
+
+  const when = new Date(offer.savedAt);
+  const widgets = offer.project.pages?.reduce((n, p) => n + (p.widgets?.length ?? 0), 0) ?? 0;
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 10000,
+      background: 'rgba(0,0,0,0.72)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div style={{
+        background: '#1a1a1a', border: '1px solid #3a3a3a', borderRadius: 8,
+        padding: '22px 26px', minWidth: 420, maxWidth: 560,
+        boxShadow: '0 10px 40px rgba(0,0,0,0.8)', fontFamily: 'inherit',
+      }}>
+        <div style={{ fontSize: 17, fontWeight: 700, color: '#eee', marginBottom: 10 }}>
+          Unsaved work recovered
+        </div>
+        <div style={{ fontSize: 14, color: '#b0b0b0', lineHeight: 1.55, marginBottom: 18 }}>
+          LiveForge closed with changes that were never saved to a file.
+          <div style={{ marginTop: 10, fontFamily: 'monospace', fontSize: 13, color: '#ddd' }}>
+            {offer.project.name || 'untitled'}
+            <span style={{ color: '#777' }}>
+              {' · '}{offer.project.pages?.length ?? 0} pages
+              {' · '}{widgets} widgets
+            </span>
+            <div style={{ color: '#777', marginTop: 3 }}>
+              {when.toLocaleString()}
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => {
+              // Only drop it once the user has said so — never on their behalf.
+              bridge.invoke('tr:project:recoverClear', undefined as never).catch(() => {});
+              setOffer(null);
+            }}
+            style={{
+              background: 'none', border: '1px solid #3a3a3a', color: '#999',
+              borderRadius: 5, padding: '10px 18px', fontSize: 14, cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            Discard
+          </button>
+          <button
+            onClick={() => { useStore.getState().loadProject(offer.project); setOffer(null); }}
+            style={{
+              background: 'var(--color-accent, #646cff)', border: '1px solid var(--color-accent, #646cff)',
+              color: '#000', fontWeight: 700,
+              borderRadius: 5, padding: '10px 18px', fontSize: 14, cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            Restore
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

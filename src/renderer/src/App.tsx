@@ -8,6 +8,8 @@ import LiveMode from '../modes/live/LiveMode';
 import GlobalBar from '../modes/GlobalBar';
 import LogConsole from '../modes/LogConsole';
 import LearnModeLayer from '../modes/LearnModeLayer';
+import Recovery from '../modes/Recovery';
+import CrashScreen from '../modes/CrashScreen';
 
 export default function App(): React.JSX.Element {
   const mode    = useMode();
@@ -52,9 +54,14 @@ export default function App(): React.JSX.Element {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <GlobalBar />
       <LearnModeLayer />
+      {/* Only the mode content is wrapped: a crash in a widget must not take the
+          top bar with it, or there is no way to save what survived. */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
-        {mode === 'design' ? <DesignMode /> : <LiveMode />}
+        <CrashScreen key={mode}>
+          {mode === 'design' ? <DesignMode /> : <LiveMode />}
+        </CrashScreen>
       </div>
+      <Recovery />
       <LogConsole />
     </div>
   );
